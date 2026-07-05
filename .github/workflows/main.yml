@@ -197,7 +197,7 @@ jobs:
         EOF
 
     # ================
-    # SwiftUI Xogot‑style editor (force unwrap applied to createEngineView)
+    # SwiftUI Xogot‑style editor with viewport, panels, sliders
     # ================
     - name: Generate SwiftUI Editor
       run: |
@@ -388,7 +388,7 @@ jobs:
         EOF
 
     # ================
-    # XcodeGen project (single settings block with bridging header)
+    # XcodeGen project (added bin/obj/platform/ios for generated headers)
     # ================
     - name: Install XcodeGen
       run: brew install xcodegen
@@ -426,6 +426,7 @@ jobs:
                 - $(inherited)
                 - $(PROJECT_DIR)/godot_src
                 - $(PROJECT_DIR)/godot_src/platform/iphone
+                - $(PROJECT_DIR)/godot_src/bin/obj/platform/ios
             dependencies:
               - framework: UIKit.framework
               - framework: Metal.framework
