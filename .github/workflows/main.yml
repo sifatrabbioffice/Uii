@@ -46,7 +46,7 @@ jobs:
         find godot_src/bin -name "platform_config.h" -exec cp {} godot_src/platform/ios/ \;
 
     # ================
-    # Create app directories & copy artifacts, then remove duplicate main
+    # Create directories & copy artifacts, then remove duplicate main
     # ================
     - name: Create App Directories
       run: |
@@ -101,7 +101,7 @@ jobs:
         EOF
 
     # ================
-    # C++ Core (engine startup)
+    # C++ Core
     # ================
     - name: Generate C++ Core
       run: |
@@ -149,7 +149,7 @@ jobs:
         EOF
 
     # ================
-    # Embedded plugin stubs (C++ linkage)
+    # Embedded plugin stubs
     # ================
     - name: Generate Embedded Plugin Stubs
       run: |
@@ -398,7 +398,7 @@ jobs:
         EOF
 
     # ================
-    # XcodeGen project
+    # XcodeGen project (fixed framework linking)
     # ================
     - name: Install XcodeGen
       run: brew install xcodegen
@@ -438,17 +438,17 @@ jobs:
                 - $(PROJECT_DIR)/godot_src
                 - $(PROJECT_DIR)/godot_src/platform/ios
             dependencies:
-              - framework: UIKit.framework
-              - framework: Metal.framework
-              - framework: QuartzCore.framework
-              - framework: OpenGLES.framework
-              - framework: CoreMotion.framework
-              - framework: CoreMedia.framework
-              - framework: AVFoundation.framework
-              - framework: CoreGraphics.framework
-              - framework: CoreText.framework
-              - framework: ImageIO.framework
-              - framework: GameController.framework
+              - sdk: UIKit.framework
+              - sdk: Metal.framework
+              - sdk: QuartzCore.framework
+              - sdk: OpenGLES.framework
+              - sdk: CoreMotion.framework
+              - sdk: CoreMedia.framework
+              - sdk: AVFoundation.framework
+              - sdk: CoreGraphics.framework
+              - sdk: CoreText.framework
+              - sdk: ImageIO.framework
+              - sdk: GameController.framework
               - sdk: libc++.tbd
               - sdk: libz.tbd
         EOF
