@@ -24,7 +24,7 @@ jobs:
     # ================
     - name: Clone Godot Engine
       run: |
-        git clone --branch master --depth 1 https://github.com/timoschwarzer/godot.git godot_src
+        git clone --branch ios_editor --depth 1 https://github.com/timoschwarzer/godot.git godot_src
 
     # ================
     # Build Godot iOS static library (template_release – engine only)
@@ -388,7 +388,7 @@ jobs:
         EOF
 
     # ================
-    # XcodeGen project (header search paths point to Godot source)
+    # XcodeGen project (corrected bridging header path)
     # ================
     - name: Install XcodeGen
       run: brew install xcodegen
@@ -410,7 +410,7 @@ jobs:
               - path: XogotApp/Bridge
             settings:
               INFOPLIST_FILE: XogotApp/Info.plist
-              SWIFT_OBJC_BRIDGING_HEADER: XogotApp/Bridge/BridgingHeader.h
+              SWIFT_OBJC_BRIDGING_HEADER: $(PROJECT_DIR)/XogotApp/Bridge/BridgingHeader.h
               CODE_SIGNING_ALLOWED: NO
               CODE_SIGNING_REQUIRED: NO
               CODE_SIGN_IDENTITY: ""
