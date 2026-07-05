@@ -37,10 +37,9 @@ jobs:
           progress=no -j$(sysctl -n hw.logicalcpu)
         mkdir -p ../libs
         cp bin/libgodot.ios.template_release.arm64.a ../libs/libgodot_engine.a
-        cp -r platform/iphone/godot_headers ../libs/headers
 
     # ================
-    # App directories & copy Godot artifacts
+    # App directories & copy Godot artifacts (library only, headers come from source)
     # ================
     - name: Create App Directories
       run: |
@@ -52,7 +51,6 @@ jobs:
     - name: Copy Godot Artifacts
       run: |
         cp libs/libgodot_engine.a XogotApp/Libs/
-        cp -r libs/headers XogotApp/Core/godot_headers
 
     # ================
     # Info.plist
@@ -118,7 +116,6 @@ jobs:
         #include "GodotEngine.hpp"
         #include "core/version.h"
         #include "main/main.h"
-        #include "scene/main/node.h"
         #include "core/engine.h"
 
         std::string GodotEngine::getEngineVersion() {
@@ -138,9 +135,7 @@ jobs:
         }
 
         void GodotEngine::updateNodeTransform(float x, float y, float z) {
-            // This would access the current scene tree and modify a selected node.
-            // For demonstration, we simply store the values.
-            // A real implementation would use Engine::get_singleton()->get_main_loop() ...
+            // Placeholder: will eventually access scene tree nodes.
         }
         EOF
 
@@ -159,7 +154,7 @@ jobs:
         + (void)startEngineWithArgc:(int)argc argv:(char**)argv;
         + (void)iterateEngine;
         + (void)updateNodeTransformX:(float)x y:(float)y z:(float)z;
-        + (UIView*)createEngineView;  // returns a UIView that will host the Godot render layer
+        + (UIView*)createEngineView;
 
         @end
         EOF
@@ -190,8 +185,7 @@ jobs:
         + (UIView*)createEngineView {
             UIView *view = [[UIView alloc] init];
             view.contentScaleFactor = UIScreen.mainScreen.scale;
-            // The Godot engine will later attach its Metal/GL layer to this view.
-            // For now we just return a placeholder.
+            // The engine will attach its rendering layer later.
             return view;
         }
 
@@ -213,11 +207,9 @@ jobs:
         @main
         struct XogotApp: App {
             init() {
-                // Boot the Godot engine
                 let args = CommandLine.arguments
                 var cargs = args.map { strdup($0) }
                 GodotWrapper.startEngine(withArgc: Int32(args.count), argv: &cargs)
-                // Start a CADisplayLink‑driven loop for Godot iterations
                 Timer.scheduledTimer(withTimeInterval: 1.0/60.0, repeats: true) { _ in
                     GodotWrapper.iterateEngine()
                 }
@@ -240,10 +232,7 @@ jobs:
                     HStack(spacing: 0) {
                         SceneTreePanel().frame(width: 250)
                         Divider().background(Color.white.opacity(0.1))
-                        
-                        // Godot viewport
                         GodotViewport().frame(maxWidth: .infinity, maxHeight: .infinity)
-                        
                         Divider().background(Color.white.opacity(0.1))
                         InspectorPanel().frame(width: 300)
                     }
@@ -306,7 +295,6 @@ jobs:
         struct GodotViewport: UIViewRepresentable {
             func makeUIView(context: Context) -> UIView {
                 let view = GodotWrapper.createEngineView()
-                // The engine will attach its rendering layer to this view automatically.
                 return view
             }
             func updateUIView(_ uiView: UIView, context: Context) {}
@@ -400,7 +388,7 @@ jobs:
         EOF
 
     # ================
-    # XcodeGen project
+    # XcodeGen project (header search paths point to Godot source)
     # ================
     - name: Install XcodeGen
       run: brew install xcodegen
@@ -451,7 +439,8 @@ jobs:
                 - -Wl,-force_load,$(LIBRARY_SEARCH_PATHS)/libgodot_engine.a
               HEADER_SEARCH_PATHS:
                 - $(inherited)
-                - $(PROJECT_DIR)/XogotApp/Core/godot_headers
+                - $(PROJECT_DIR)/godot_src
+                - $(PROJECT_DIR)/godot_src/platform/iphone
         EOF
 
     - name: Generate Xcode Project
