@@ -20,34 +20,33 @@ jobs:
         pip3 install --user --break-system-packages pyyaml
 
     # ================
-    # Clone Godot (iOS Engine Fork – template_release, no editor UI)
+    # Clone Godot (iOS Engine Fork – master branch, template_release)
     # ================
     - name: Clone Godot Engine
       run: |
         git clone --branch master --depth 1 https://github.com/timoschwarzer/godot.git godot_src
 
     # ================
-    # Build Godot iOS static library (template_release – engine only)
+    # Build Godot iOS static library (disable Vulkan to avoid MoltenVK dependency)
     # ================
     - name: Build Godot iOS Engine Library
       run: |
         cd godot_src
         scons platform=ios target=template_release arch=arm64 optimize=size bits=64 ios_simulator=no \
-          module_editor=no module_mono=no module_webrtc=no module_regex=no \
+          module_editor=no module_mono=no module_webrtc=no module_regex=no vulkan=no \
           progress=no -j$(sysctl -n hw.logicalcpu)
         mkdir -p ../libs
         cp bin/libgodot.ios.template_release.arm64.a ../libs/libgodot_engine.a
 
     # ================
-    # Copy missing generated headers (platform_config.h, etc.) into an included directory
+    # Copy missing generated headers (platform_config.h, etc.)
     # ================
     - name: Copy generated headers
       run: |
-        # Find platform_config.h and any other platform-specific generated headers
         find godot_src/bin -name "platform_config.h" -exec cp {} godot_src/platform/ios/ \;
 
     # ================
-    # App directories & copy Godot artifacts
+    # App directories & copy artifacts
     # ================
     - name: Create App Directories
       run: |
@@ -100,7 +99,7 @@ jobs:
         EOF
 
     # ================
-    # C++ Core (engine startup and scene manipulation)
+    # C++ Core (engine startup)
     # ================
     - name: Generate C++ Core
       run: |
@@ -144,6 +143,18 @@ jobs:
 
         void GodotEngine::updateNodeTransform(float x, float y, float z) {
             // Placeholder: will eventually access scene tree nodes.
+        }
+        EOF
+
+    # ================
+    # Embedded plugin stubs (satisfy linker requirements)
+    # ================
+    - name: Generate Embedded Plugin Stubs
+      run: |
+        cat << 'EOF' > XogotApp/Core/plugin_stubs.cpp
+        extern "C" {
+        void godot_apple_embedded_plugins_initialize() {}
+        void godot_apple_embedded_plugins_deinitialize() {}
         }
         EOF
 
@@ -193,7 +204,6 @@ jobs:
         + (UIView*)createEngineView {
             UIView *view = [[UIView alloc] init];
             view.contentScaleFactor = UIScreen.mainScreen.scale;
-            // The engine will attach its rendering layer later.
             return view;
         }
 
@@ -205,7 +215,7 @@ jobs:
         EOF
 
     # ================
-    # SwiftUI Xogot‑style editor with viewport, panels, sliders
+    # SwiftUI Xogot‑style editor
     # ================
     - name: Generate SwiftUI Editor
       run: |
@@ -230,7 +240,6 @@ jobs:
             }
         }
 
-        // MARK: - Main layout
         struct XogotMainEditor: View {
             var body: some View {
                 VStack(spacing: 0) {
@@ -252,7 +261,6 @@ jobs:
             }
         }
 
-        // MARK: - Top Toolbar
         struct TopToolbar: View {
             var body: some View {
                 HStack(spacing: 16) {
@@ -279,7 +287,6 @@ jobs:
             }
         }
 
-        // MARK: - Scene Tree Panel
         struct SceneTreePanel: View {
             var body: some View {
                 VStack(alignment: .leading, spacing: 0) {
@@ -299,16 +306,13 @@ jobs:
             }
         }
 
-        // MARK: - Godot Viewport (UIViewRepresentable) – force unwrap
         struct GodotViewport: UIViewRepresentable {
             func makeUIView(context: Context) -> UIView {
-                // createEngineView never returns nil, force unwrap is safe.
                 return GodotWrapper.createEngineView()!
             }
             func updateUIView(_ uiView: UIView, context: Context) {}
         }
 
-        // MARK: - Inspector Panel (with sliders connected to engine)
         struct InspectorPanel: View {
             @State private var posX: Float = 0.0
             @State private var posY: Float = 0.0
@@ -341,7 +345,6 @@ jobs:
             }
         }
 
-        // Reusable slider row
         struct PropertySlider: View {
             let label: String
             @Binding var value: Float
@@ -362,7 +365,6 @@ jobs:
             }
         }
 
-        // MARK: - Bottom Controls
         struct BottomControls: View {
             @State private var mode3D = true
             
@@ -396,7 +398,7 @@ jobs:
         EOF
 
     # ================
-    # XcodeGen project (added C++17 standard)
+    # XcodeGen project (C++17, bridging header, stubs included)
     # ================
     - name: Install XcodeGen
       run: brew install xcodegen
