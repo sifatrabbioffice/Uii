@@ -1,40 +1,47 @@
-name: Xogot iOS Unsigned IPA Builder
+name: Xogot Complete iOS Architecture Build
 
 on:
   push:
     branches: [ "main" ]
 
 jobs:
-  build-ios-ipa:
-    name: Generate Code, C++ Bridge, and Build Unsigned IPA
+  build-xogot-ios:
+    name: Build Xogot with Godot Core (Fix null descriptor)
     runs-on: macos-latest
 
     steps:
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    # ১. প্রোজেক্ট ডিরেক্টরি তৈরি
-    - name: Create Directory Structure
+    - name: Create Architecture Directories
       run: |
         mkdir -p XogotApp/Sources
         mkdir -p XogotApp/Core
+        mkdir -p XogotApp/Bridge
 
-    # ২. Info.plist তৈরি (info.int)
-    - name: Generate Info.plist
+    # ==========================================
+    # 1. FIXED INFO.PLIST (The cause of the crash)
+    # ==========================================
+    - name: Generate Fixed Info.plist
       run: |
         cat << 'EOF' > XogotApp/Info.plist
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
         <plist version="1.0">
         <dict>
-            <key>CFBundleIdentifier</key>
+            <key>CFBundleExecutable</key>
+            <string>XogotApp</string> <key>CFBundleIdentifier</key>
             <string>com.xogot.editor</string>
             <key>CFBundleName</key>
             <string>Xogot</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
             <key>CFBundleShortVersionString</key>
             <string>1.0</string>
             <key>CFBundleVersion</key>
             <string>1</string>
+            <key>LSRequiresIPhoneOS</key>
+            <true/>
             <key>UILaunchStoryboardName</key>
             <string>LaunchScreen</string>
             <key>UIApplicationSceneManifest</key>
@@ -46,10 +53,11 @@ jobs:
         </plist>
         EOF
 
-    # ৩. C++ Code Generation (ccodegen) & Bridging Header
-    - name: Generate C++ Engine Core and Bridge
+    # ==========================================
+    # 2. GODOT C++ CORE ARCHITECTURE
+    # ==========================================
+    - name: Generate Godot C++ Core
       run: |
-        # C++ Header
         cat << 'EOF' > XogotApp/Core/GodotEngine.hpp
         #ifndef GODOT_ENGINE_HPP
         #define GODOT_ENGINE_HPP
@@ -62,30 +70,62 @@ jobs:
         #endif
         EOF
         
-        # C++ Source
         cat << 'EOF' > XogotApp/Core/GodotEngine.cpp
         #include "GodotEngine.hpp"
         std::string GodotEngine::getEngineVersion() {
-            return "Xogot Core Engine v1.0 (C++)";
+            return "Godot Core 4.x (Xogot Build)";
         }
         void GodotEngine::updateNodeTransform(float x, float y, float z) {
-            // C++ Logic to update 3D Node
+            // Godot C++ Engine Logic will execute here
         }
         EOF
 
-        # Objective-C++ Wrapper (Bridge to Swift)
-        cat << 'EOF' > XogotApp/Sources/BridgingHeader.h
-        // Expose C++ or Objective-C to Swift here
+    # ==========================================
+    # 3. OBJECTIVE-C++ BRIDGE (Crucial for Swift <-> C++)
+    # ==========================================
+    - name: Generate Objective-C++ Bridge
+      run: |
+        cat << 'EOF' > XogotApp/Bridge/GodotWrapper.h
+        #import <Foundation/Foundation.h>
+        @interface GodotWrapper : NSObject
+        + (NSString *)getEngineVersion;
+        + (void)updateNodeTransformX:(float)x y:(float)y z:(float)z;
+        @end
         EOF
 
-    # ৪. সম্পূর্ণ SwiftUI কোড জেনারেট করা (iOS এর জন্য UIColor সহ)
-    - name: Generate Complete SwiftUI Code
+        cat << 'EOF' > XogotApp/Bridge/GodotWrapper.mm
+        #import "GodotWrapper.h"
+        #import "GodotEngine.hpp"
+        
+        @implementation GodotWrapper
+        + (NSString *)getEngineVersion {
+            std::string version = GodotEngine::getEngineVersion();
+            return [NSString stringWithUTF8String:version.c_str()];
+        }
+        + (void)updateNodeTransformX:(float)x y:(float)y z:(float)z {
+            GodotEngine::updateNodeTransform(x, y, z);
+        }
+        @end
+        EOF
+
+        cat << 'EOF' > XogotApp/Bridge/BridgingHeader.h
+        #import "GodotWrapper.h"
+        EOF
+
+    # ==========================================
+    # 4. SWIFTUI INTERFACE (Using Bridge)
+    # ==========================================
+    - name: Generate SwiftUI Code
       run: |
         cat << 'EOF' > XogotApp/Sources/XogotApp.swift
         import SwiftUI
 
         @main
         struct XogotApp: App {
+            init() {
+                // Test C++ Engine Bridge on Startup
+                print("Engine Initialized: \(GodotWrapper.getEngineVersion() ?? "Unknown")")
+            }
             var body: some Scene {
                 WindowGroup {
                     MainEditorView()
@@ -93,24 +133,18 @@ jobs:
             }
         }
 
-        // MARK: - Main Editor View
         struct MainEditorView: View {
             var body: some View {
                 VStack(spacing: 0) {
                     TopToolbarView()
                     Divider()
-                    
-                    // iOS এর জন্য আড়াআড়ি (Landscape) ডিজাইনে স্ক্রল বা স্ট্যাক
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 0) {
-                            SceneTreeView()
-                                .frame(width: 260)
+                            SceneTreeView().frame(width: 250)
                             Divider()
-                            WorkspaceView()
-                                .frame(width: UIScreen.main.bounds.width > 800 ? 500 : 300) // Responsive
+                            WorkspaceView().frame(width: 500)
                             Divider()
-                            InspectorView()
-                                .frame(width: 300)
+                            InspectorView().frame(width: 300)
                         }
                     }
                 }
@@ -118,113 +152,61 @@ jobs:
             }
         }
 
-        // MARK: - 1. Top Toolbar
         struct TopToolbarView: View {
             var body: some View {
                 HStack {
                     Button("2D") {}
                     Button("3D") {}
-                    Button("Script") {}
                     Spacer()
                     Button(action: {}) { Image(systemName: "play.fill") }
-                    Button(action: {}) { Image(systemName: "pause.fill") }
-                    Button(action: {}) { Image(systemName: "stop.fill") }
                     Spacer()
-                    Button(action: {}) { Image(systemName: "gear") }
-                }
-                .padding()
-                .frame(height: 50)
+                }.padding().frame(height: 50)
             }
         }
 
-        // MARK: - 2. Scene Tree
         struct SceneTreeView: View {
             var body: some View {
-                VStack {
-                    HStack {
-                        Button(action: {}) { Image(systemName: "plus") }
-                        Button(action: {}) { Image(systemName: "link") }
-                        Spacer()
-                    }
-                    .padding()
-                    
-                    List {
-                        Text("Node3D")
-                        Text("  ↳ CharacterBody3D").foregroundColor(.blue)
-                        Text("      ↳ MeshInstance3D")
-                        Text("      ↳ CollisionShape3D")
-                    }
+                List {
+                    Text("Node3D")
+                    Text("  ↳ CharacterBody3D").foregroundColor(.blue)
                 }
-                .background(Color(UIColor.secondarySystemBackground))
             }
         }
 
-        // MARK: - 3. Center Workspace
         struct WorkspaceView: View {
             var body: some View {
-                VStack(spacing: 0) {
-                    HStack {
-                        Button(action: {}) { Image(systemName: "cursorarrow") }
-                        Button(action: {}) { Image(systemName: "arrow.up.and.down.and.arrow.left.and.right") }
-                        Spacer()
-                    }
-                    .padding()
-                    .background(Color(UIColor.tertiarySystemBackground))
-                    
-                    Text("3D Engine Rendering Viewport")
-                        .foregroundColor(.gray)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(Color.black)
-                }
+                Text("Godot 3D Viewport (Rendered via C++)")
+                    .foregroundColor(.gray)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.black)
             }
         }
 
-        // MARK: - 4. Inspector Panel
         struct InspectorView: View {
-            @State private var selectedTab = "Properties"
+            @State private var posX: Float = 0.0
             var body: some View {
-                VStack(spacing: 0) {
-                    Picker("Tabs", selection: $selectedTab) {
-                        Text("Properties").tag("Properties")
-                        Text("Signals").tag("Signals")
-                    }
-                    .pickerStyle(SegmentedPickerStyle())
-                    .padding()
-                    
-                    ScrollView {
-                        if selectedTab == "Properties" {
-                            PropertiesTab()
-                        } else {
-                            Text("Signals Panel")
+                Form {
+                    Section(header: Text("Transform")) {
+                        HStack {
+                            Text("Position X:")
+                            Slider(value: $posX, in: -10...10)
+                                .onChange(of: posX) { newValue in
+                                    // Send UI change to Godot C++ Core
+                                    GodotWrapper.updateNodeTransformX(newValue, y: 0, z: 0)
+                                }
                         }
                     }
                 }
-                .background(Color(UIColor.secondarySystemBackground))
-            }
-        }
-
-        // MARK: - 5. Properties Specifics
-        struct PropertiesTab: View {
-            var body: some View {
-                VStack(alignment: .leading, spacing: 15) {
-                    Text("CharacterBody3D").font(.headline).bold()
-                    HStack {
-                        Text("Motion Mode")
-                        Spacer()
-                        Text("Grounded").foregroundColor(.blue)
-                    }
-                    Toggle("Slide on Ceiling", isOn: .constant(true))
-                }
-                .padding()
             }
         }
         EOF
 
-    # ৫. XcodeGen ইন্সটল করা (প্রজেক্ট ফাইল তৈরি করার জন্য)
+    # ==========================================
+    # 5. XCODEGEN CONFIGURATION
+    # ==========================================
     - name: Install XcodeGen
       run: brew install xcodegen
 
-    # ৬. XcodeGen Configuration (project.yml) তৈরি করা
     - name: Create project.yml
       run: |
         cat << 'EOF' > project.yml
@@ -239,20 +221,22 @@ jobs:
             sources:
               - path: XogotApp/Sources
               - path: XogotApp/Core
+              - path: XogotApp/Bridge
             settings:
               INFOPLIST_FILE: XogotApp/Info.plist
+              SWIFT_OBJC_BRIDGING_HEADER: XogotApp/Bridge/BridgingHeader.h
               CODE_SIGNING_ALLOWED: NO
               CODE_SIGNING_REQUIRED: NO
               CODE_SIGN_IDENTITY: ""
-              SWIFT_OBJC_BRIDGING_HEADER: XogotApp/Sources/BridgingHeader.h
         EOF
 
-    # ৭. প্রজেক্ট ফাইল (.xcodeproj) জেনারেট করা
     - name: Generate Xcode Project
       run: xcodegen generate
 
-    # ৮. অ্যাপ বিল্ড করা (iOS SDK এর জন্য)
-    - name: Build App Payload
+    # ==========================================
+    # 6. BUILD APP PAYLOAD
+    # ==========================================
+    - name: Build App for iOS
       run: |
         xcodebuild build \
           -project XogotApp.xcodeproj \
@@ -264,18 +248,25 @@ jobs:
           CODE_SIGN_IDENTITY="" \
           BUILD_DIR="$(PWD)/build"
 
-    # ৯. Unsigned IPA তৈরি করা (Payload ফোল্ডার জিপ করে)
-    - name: Package Unsigned IPA
+    # ==========================================
+    # 7. PSEUDO-SIGNING (Fixes crash on Sideload)
+    # ==========================================
+    - name: Install ldid for Pseudo-Signing
+      run: brew install ldid
+
+    - name: Package and Pseudo-Sign Unsigned IPA
       run: |
         mkdir -p Payload
-        # build ফোল্ডার থেকে .app ফাইলটি Payload ফোল্ডারে কপি করা
         cp -r build/Release-iphoneos/XogotApp.app Payload/
-        # Payload ফোল্ডার জিপ করে .ipa এক্সটেনশন দেওয়া
-        zip -r XogotApp-Unsigned.ipa Payload/
+        # Pseudo-sign the binary so tools like TrollStore can run it without "Killed: 9" or bad descriptors
+        ldid -S Payload/XogotApp.app/XogotApp
+        zip -r XogotApp.ipa Payload/
 
-    # ১০. IPA ফাইলটি গিটহাব থেকে ডাউনলোড করার জন্য আর্টফ্যাক্ট হিসেবে আপলোড করা
+    # ==========================================
+    # 8. UPLOAD ARTIFACT
+    # ==========================================
     - name: Upload IPA Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: XogotApp-Unsigned-IPA
-        path: XogotApp-Unsigned.ipa
+        name: XogotApp-iOS-IPA
+        path: XogotApp.ipa
