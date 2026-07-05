@@ -124,7 +124,7 @@ jobs:
         #include "GodotEngine.hpp"
         #include "core/version.h"
         #include "main/main.h"
-        #include "core/engine.h"
+        #include "core/config/engine.h"
 
         std::string GodotEngine::getEngineVersion() {
             return VERSION_FULL_CONFIG;
