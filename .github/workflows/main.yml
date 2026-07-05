@@ -24,7 +24,7 @@ jobs:
     # ================
     - name: Clone Godot Engine
       run: |
-        git clone --branch master --depth 1 https://github.com/timoschwarzer/godot.git godot_src
+        git clone --branch ios_editor --depth 1 https://github.com/timoschwarzer/godot.git godot_src
 
     # ================
     # Build Godot iOS static library (template_release – engine only)
@@ -197,7 +197,7 @@ jobs:
         EOF
 
     # ================
-    # SwiftUI Xogot‑style editor with viewport, panels, sliders
+    # SwiftUI Xogot‑style editor (force unwrap applied to createEngineView)
     # ================
     - name: Generate SwiftUI Editor
       run: |
@@ -291,11 +291,11 @@ jobs:
             }
         }
 
-        // MARK: - Godot Viewport (UIViewRepresentable)
+        // MARK: - Godot Viewport (UIViewRepresentable) – force unwrap
         struct GodotViewport: UIViewRepresentable {
             func makeUIView(context: Context) -> UIView {
-                let view = GodotWrapper.createEngineView()
-                return view
+                // createEngineView never returns nil, force unwrap is safe.
+                return GodotWrapper.createEngineView()!
             }
             func updateUIView(_ uiView: UIView, context: Context) {}
         }
