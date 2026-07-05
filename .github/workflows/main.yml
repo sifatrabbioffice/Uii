@@ -27,26 +27,26 @@ jobs:
         git clone --branch master --depth 1 https://github.com/timoschwarzer/godot.git godot_src
 
     # ================
-    # Build Godot iOS static library (disable Vulkan)
+    # Build Godot iOS static library (disable Vulkan, no main)
     # ================
     - name: Build Godot iOS Engine Library
       run: |
         cd godot_src
         scons platform=ios target=template_release arch=arm64 optimize=size bits=64 ios_simulator=no \
-          module_editor=no module_mono=no module_webrtc=no module_regex=no vulkan=no \
+          module_editor=no module_mono=no module_webrtc=no module_regex=no vulkan=no no_main=yes \
           progress=no -j$(sysctl -n hw.logicalcpu)
         mkdir -p ../libs
         cp bin/libgodot.ios.template_release.arm64.a ../libs/libgodot_engine.a
 
     # ================
-    # Copy generated headers
+    # Copy missing generated headers (platform_config.h, etc.)
     # ================
     - name: Copy generated headers
       run: |
         find godot_src/bin -name "platform_config.h" -exec cp {} godot_src/platform/ios/ \;
 
     # ================
-    # Create app directories & copy artifacts
+    # App directories & copy Godot artifacts
     # ================
     - name: Create App Directories
       run: |
@@ -99,7 +99,7 @@ jobs:
         EOF
 
     # ================
-    # C++ Core
+    # C++ Core (engine startup)
     # ================
     - name: Generate C++ Core
       run: |
@@ -147,7 +147,7 @@ jobs:
         EOF
 
     # ================
-    # Plugin stubs (C++ linkage, no extern "C")
+    # Embedded plugin stubs (C++ linkage, no extern "C")
     # ================
     - name: Generate Embedded Plugin Stubs
       run: |
@@ -213,7 +213,7 @@ jobs:
         EOF
 
     # ================
-    # SwiftUI Editor
+    # SwiftUI Xogot‑style editor
     # ================
     - name: Generate SwiftUI Editor
       run: |
@@ -396,7 +396,7 @@ jobs:
         EOF
 
     # ================
-    # XcodeGen project (added duplicate suppression flag)
+    # XcodeGen project (removed multiply_defined flag, added no_main to SCons)
     # ================
     - name: Install XcodeGen
       run: brew install xcodegen
@@ -431,7 +431,6 @@ jobs:
                 - -lstdc++
                 - $(PROJECT_DIR)/XogotApp/Libs/libgodot_engine.a
                 - -Wl,-force_load,$(PROJECT_DIR)/XogotApp/Libs/libgodot_engine.a
-                - -Wl,-multiply_defined,suppress
               HEADER_SEARCH_PATHS:
                 - $(inherited)
                 - $(PROJECT_DIR)/godot_src
