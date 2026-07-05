@@ -27,7 +27,7 @@ jobs:
         git clone --branch master --depth 1 https://github.com/timoschwarzer/godot.git godot_src
 
     # ================
-    # Build Godot iOS static library (disable Vulkan to avoid MoltenVK dependency)
+    # Build Godot iOS static library (disable Vulkan)
     # ================
     - name: Build Godot iOS Engine Library
       run: |
@@ -39,14 +39,14 @@ jobs:
         cp bin/libgodot.ios.template_release.arm64.a ../libs/libgodot_engine.a
 
     # ================
-    # Copy missing generated headers (platform_config.h, etc.)
+    # Copy generated headers
     # ================
     - name: Copy generated headers
       run: |
         find godot_src/bin -name "platform_config.h" -exec cp {} godot_src/platform/ios/ \;
 
     # ================
-    # App directories & copy artifacts
+    # Create app directories & copy artifacts
     # ================
     - name: Create App Directories
       run: |
@@ -99,7 +99,7 @@ jobs:
         EOF
 
     # ================
-    # C++ Core (engine startup)
+    # C++ Core
     # ================
     - name: Generate C++ Core
       run: |
@@ -142,12 +142,12 @@ jobs:
         }
 
         void GodotEngine::updateNodeTransform(float x, float y, float z) {
-            // Placeholder: will eventually access scene tree nodes.
+            // Placeholder
         }
         EOF
 
     # ================
-    # Embedded plugin stubs (C++ linkage, no extern "C")
+    # Plugin stubs (C++ linkage, no extern "C")
     # ================
     - name: Generate Embedded Plugin Stubs
       run: |
@@ -213,7 +213,7 @@ jobs:
         EOF
 
     # ================
-    # SwiftUI Xogot‑style editor
+    # SwiftUI Editor
     # ================
     - name: Generate SwiftUI Editor
       run: |
@@ -396,7 +396,7 @@ jobs:
         EOF
 
     # ================
-    # XcodeGen project
+    # XcodeGen project (added duplicate suppression flag)
     # ================
     - name: Install XcodeGen
       run: brew install xcodegen
@@ -431,6 +431,7 @@ jobs:
                 - -lstdc++
                 - $(PROJECT_DIR)/XogotApp/Libs/libgodot_engine.a
                 - -Wl,-force_load,$(PROJECT_DIR)/XogotApp/Libs/libgodot_engine.a
+                - -Wl,-multiply_defined,suppress
               HEADER_SEARCH_PATHS:
                 - $(inherited)
                 - $(PROJECT_DIR)/godot_src
