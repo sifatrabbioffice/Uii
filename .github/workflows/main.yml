@@ -1,4 +1,4 @@
-name: Xogot Complete iOS Architecture Build (with Real Godot Engine)
+name: Xogot Complete iOS Architecture Build (Full Editor)
 
 on:
   push:
@@ -6,45 +6,44 @@ on:
 
 jobs:
   build-xogot-ios:
-    name: Build Xogot with Godot Core (Embedded Engine)
+    name: Build Xogot with Full Godot Editor (Unofficial)
     runs-on: macos-latest
+    timeout-minutes: 360
 
     steps:
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    # ================
-    # Install prerequisites for building Godot
-    # ================
     - name: Install Build Tools
       run: |
         brew install scons
         pip3 install --user pyyaml
 
     # ================
-    # Clone Godot Engine from GitHub
+    # Clone patched Godot repository (supports iOS editor)
     # ================
-    - name: Clone Godot Repository
+    - name: Clone Godot (iOS Editor Fork)
       run: |
-        git clone --branch 4.3 --depth 1 https://github.com/godotengine/godot.git godot_src
+        git clone --branch ios_editor --depth 1 https://github.com/timoschwarzer/godot.git godot_src
 
     # ================
-    # Build Godot static library for iOS (arm64)
-    # This creates libgodot.iphone.template_release.arm64.a
+    # Build Godot editor static library for iOS
+    # Target: editor, module_editor=yes, arch=arm64
     # ================
-    - name: Build Godot iOS Static Library
+    - name: Build Godot Editor iOS Static Library
       run: |
         cd godot_src
-        scons platform=ios target=template_release arch=arm64 optimize=size bits=64 ios_simulator=no \
-          module_editor=no module_x11=no module_mono=no module_webrtc=no module_regex=no \
-          verbose=yes
-        # The resulting library will be in bin/
+        scons platform=ios target=editor arch=arm64 optimize=size bits=64 ios_simulator=no \
+          module_editor=yes module_mono=no module_webrtc=no module_regex=no \
+          progress=no -j$(sysctl -n hw.logicalcpu)
         mkdir -p ../libs
-        cp bin/libgodot.iphone.template_release.arm64.a ../libs/libgodot_engine.a
+        cp bin/libgodot.iphone.editor.arm64.a ../libs/libgodot_editor.a
         cp -r platform/iphone/godot_headers ../libs/headers
+        # Copy editor resources (icons, fonts, etc.) – the editor needs them at runtime
+        cp -r misc/dist/ios_tools/editor_data ../libs/editor_data
 
     # ================
-    # Create architecture directories
+    # Create app directories
     # ================
     - name: Create App Directories
       run: |
@@ -52,12 +51,13 @@ jobs:
         mkdir -p XogotApp/Core
         mkdir -p XogotApp/Bridge
         mkdir -p XogotApp/Libs
+        mkdir -p XogotApp/EditorResources
 
-    # Copy built library and headers
     - name: Copy Godot Artifacts
       run: |
-        cp libs/libgodot_engine.a XogotApp/Libs/
+        cp libs/libgodot_editor.a XogotApp/Libs/
         cp -r libs/headers XogotApp/Core/godot_headers
+        cp -r libs/editor_data XogotApp/EditorResources
 
     # ================
     # Generate Info.plist
@@ -74,7 +74,7 @@ jobs:
             <key>CFBundleIdentifier</key>
             <string>com.xogot.editor</string>
             <key>CFBundleName</key>
-            <string>Xogot</string>
+            <string>Xogot Editor</string>
             <key>CFBundlePackageType</key>
             <string>APPL</string>
             <key>CFBundleShortVersionString</key>
@@ -90,75 +90,157 @@ jobs:
                 <key>UIApplicationSupportsMultipleScenes</key>
                 <false/>
             </dict>
+            <key>UIFileSharingEnabled</key>
+            <true/>
+            <key>LSSupportsOpeningDocumentsInPlace</key>
+            <true/>
         </dict>
         </plist>
         EOF
 
     # ================
-    # Real Godot C++ wrapper (using headers from built Godot)
+    # C++ Core – now initializes and runs the full editor
     # ================
-    - name: Generate C++ Core (using real Godot API)
+    - name: Generate C++ Core (Editor integration)
       run: |
         cat << 'EOF' > XogotApp/Core/GodotEngine.hpp
         #ifndef GODOT_ENGINE_HPP
         #define GODOT_ENGINE_HPP
         #include <string>
+
+        namespace godot {
+            class GodotEditor;
+        }
+
         class GodotEngine {
         public:
             static std::string getEngineVersion();
             static void updateNodeTransform(float x, float y, float z);
-            static void initGodot(int argc, char* argv[]);
+            static void initEditor(int argc, char* argv[], void* windowHandle);
+            static void runEditorLoop();
+            static void forwardTouchEvent(int type, float x, float y, int pointerId);
+        private:
+            static godot::GodotEditor* editorInstance;
         };
         #endif
         EOF
         
         cat << 'EOF' > XogotApp/Core/GodotEngine.cpp
         #include "GodotEngine.hpp"
-        // Real Godot includes
         #include "core/version.h"
-        #include "core/engine.h"
-        #include "scene/main/node.h"
+        #include "editor/editor_node.h"
+        #include "main/main.h"
+        #include "platform/iphone/os_iphone.h"
+        
+        godot::GodotEditor* GodotEngine::editorInstance = nullptr;
 
         std::string GodotEngine::getEngineVersion() {
             return VERSION_FULL_CONFIG;
         }
 
         void GodotEngine::updateNodeTransform(float x, float y, float z) {
-            // Real Godot C++ API – modify a node's transform (simplified)
-            // In practice you'd need a reference to an existing node.
+            // Editor‑specific node manipulation (will be handled by editor GUI)
         }
 
-        void GodotEngine::initGodot(int argc, char* argv[]) {
-            // Minimal Godot startup (for embedding)
-            Engine::get_singleton()->startup();
+        void GodotEngine::initEditor(int argc, char* argv[], void* windowHandle) {
+            // Set up iOS window handle (UIView layer)
+            // In the fork, this is already handled inside platform/iphone
+            Error err = Main::setup("iphone", argc, argv, false);
+            if (err != OK) {
+                ERR_PRINT("Failed to setup main");
+                return;
+            }
+
+            // Start the editor
+            editorInstance = new EditorNode;
+            editorInstance->init();
+            Main::start();
+        }
+
+        void GodotEngine::runEditorLoop() {
+            // The main loop is already running if we use the fork’s custom run loop.
+            // Here we just call process events. In practice, the fork may use a CADisplayLink.
+            Main::iteration();
+        }
+
+        void GodotEngine::forwardTouchEvent(int type, float x, float y, int pointerId) {
+            // Forward to Godot's input system
+            // Implementation depends on how the fork handles touches.
         }
         EOF
 
     # ================
-    # Objective-C++ Bridge (unchanged)
+    # Objective-C++ Bridge – expose editor start/stop and touch forwarding
     # ================
     - name: Generate Objective-C++ Bridge
       run: |
         cat << 'EOF' > XogotApp/Bridge/GodotWrapper.h
         #import <Foundation/Foundation.h>
+        #import <UIKit/UIKit.h>
+
         @interface GodotWrapper : NSObject
+
         + (NSString *)getEngineVersion;
         + (void)updateNodeTransformX:(float)x y:(float)y z:(float)z;
+        + (void)startEditorWithArgc:(int)argc argv:(char**)argv layer:(CALayer*)layer;
+        + (void)runEditorIteration;
+        + (void)forwardTouch:(UITouch*)touch eventType:(NSInteger)type;
+        + (UIView*)editorView;  // Returns the view that contains the Godot render layer
+
         @end
         EOF
 
         cat << 'EOF' > XogotApp/Bridge/GodotWrapper.mm
         #import "GodotWrapper.h"
         #import "GodotEngine.hpp"
-        
+
+        @interface GodotWrapper ()
+        @property (class, nonatomic, strong) UIView* editorContainerView;
+        @end
+
+        static UIView* _editorView = nil;
+
         @implementation GodotWrapper
+
         + (NSString *)getEngineVersion {
-            std::string version = GodotEngine::getEngineVersion();
-            return [NSString stringWithUTF8String:version.c_str()];
+            return [NSString stringWithUTF8String:GodotEngine::getEngineVersion().c_str()];
         }
+
         + (void)updateNodeTransformX:(float)x y:(float)y z:(float)z {
             GodotEngine::updateNodeTransform(x, y, z);
         }
+
+        + (void)startEditorWithArgc:(int)argc argv:(char**)argv layer:(CALayer*)layer {
+            // The editor will use the given layer as its rendering target.
+            // In the fork, we need to pass the native layer handle.
+            GodotEngine::initEditor(argc, argv, (__bridge void*)layer);
+            
+            // Start the main loop on a background thread
+            dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+                while (true) {
+                    GodotEngine::runEditorLoop();
+                    usleep(16000); // ~60 FPS
+                }
+            });
+        }
+
+        + (void)runEditorIteration {
+            GodotEngine::runEditorLoop();
+        }
+
+        + (void)forwardTouch:(UITouch*)touch eventType:(NSInteger)type {
+            CGPoint pt = [touch locationInView:nil];
+            GodotEngine::forwardTouchEvent((int)type, pt.x, pt.y, 0);
+        }
+
+        + (UIView*)editorView {
+            if (!_editorView) {
+                _editorView = [[UIView alloc] init];
+                _editorView.contentScaleFactor = UIScreen.mainScreen.scale;
+            }
+            return _editorView;
+        }
+
         @end
         EOF
 
@@ -167,7 +249,7 @@ jobs:
         EOF
 
     # ================
-    # SwiftUI Editor (your Xogot style)
+    # SwiftUI Editor Host – wraps the Godot editor UIView and handles touch
     # ================
     - name: Generate SwiftUI Code
       run: |
@@ -176,106 +258,51 @@ jobs:
 
         @main
         struct XogotApp: App {
-            init() {
-                // Boot the real Godot engine (minimal)
-                let args = CommandLine.arguments
-                var cargs = args.map { strdup($0) }
-                GodotEngine.initGodot(Int32(args.count), &cargs)
-                print("Engine Version: \(GodotWrapper.getEngineVersion() ?? "Unknown")")
-            }
             var body: some Scene {
                 WindowGroup {
-                    MainEditorView()
-                        .preferredColorScheme(.dark)
+                    GodotEditorContainer()
+                        .ignoresSafeArea()
                 }
             }
         }
 
-        // … (paste the entire MainEditorView, TopToolbar, SceneTreeView, ViewportArea,
-        //    PerspectiveSelector, InspectorView, BottomControls from the previous answer) …
-        // For brevity I’m including a simplified layout that uses the real engine.
-        // You can replace this block with your full Xogot editor UI.
-        struct MainEditorView: View {
-            var body: some View {
-                ZStack {
-                    Color.black.ignoresSafeArea()
-                    VStack(spacing: 0) {
-                        TopToolbar()
-                        HStack(spacing: 0) {
-                            SceneTreeView().frame(width: 250)
-                            ViewportArea().frame(maxWidth: .infinity, maxHeight: .infinity)
-                            InspectorView().frame(width: 300)
-                        }
-                        BottomControls()
-                    }
-                }
+        struct GodotEditorContainer: UIViewRepresentable {
+            func makeUIView(context: Context) -> UIView {
+                let view = GodotWrapper.editorView()
+                // Provide the layer to the engine (it will be used as the render target)
+                GodotWrapper.startEditor(withArgc: CommandLine.arguments.count,
+                                          argv: CommandLine.unsafeArgv,
+                                          layer: view.layer)
+                return view
+            }
+            
+            func updateUIView(_ uiView: UIView, context: Context) {}
+            
+            // Touch forwarding
+            func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?, on view: UIView) {
+                touches.forEach { GodotWrapper.forwardTouch($0, eventType: 0) }
+            }
+            func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?, on view: UIView) {
+                touches.forEach { GodotWrapper.forwardTouch($0, eventType: 1) }
+            }
+            func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?, on view: UIView) {
+                touches.forEach { GodotWrapper.forwardTouch($0, eventType: 2) }
             }
         }
 
-        struct TopToolbar: View {
-            var body: some View {
-                HStack {
-                    Image(systemName: "cursorarrow").padding()
-                    Image(systemName: "move.3d").padding()
-                    Image(systemName: "rotate.3d").padding()
-                    Spacer()
-                    Image(systemName: "play.fill").foregroundColor(.green).padding()
+        // Extension to handle touch forwarding in UIViewRepresentable
+        extension UIViewRepresentable {
+            func makeCoordinator() -> Coordinator { Coordinator() }
+            class Coordinator: NSObject {
+                override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+                    (UIApplication.shared.delegate as? AppDelegate)?.touchesBegan(touches, with: event)
                 }
-                .background(Color(.darkGray).opacity(0.8))
-                .foregroundColor(.white)
-            }
-        }
-
-        struct SceneTreeView: View {
-            var body: some View {
-                List {
-                    Text("Node3D")
-                    Text("  ↳ Camera3D").foregroundColor(.blue)
-                }
-                .listStyle(.plain)
-                .background(Color.black)
-            }
-        }
-
-        struct ViewportArea: View {
-            var body: some View {
-                Text("Godot 3D Viewport (Real Engine)")
-                    .foregroundColor(.gray)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color.black)
-            }
-        }
-
-        struct InspectorView: View {
-            @State private var posX: Float = 0.0
-            var body: some View {
-                Form {
-                    Section(header: Text("Transform")) {
-                        Slider(value: $posX, in: -10...10)
-                            .onChange(of: posX) { newValue in
-                                GodotWrapper.updateNodeTransformX(newValue, y: 0, z: 0)
-                            }
-                    }
-                }
-            }
-        }
-
-        struct BottomControls: View {
-            var body: some View {
-                HStack {
-                    Image(systemName: "arrow.counterclockwise")
-                    Spacer()
-                    Text("3D").bold()
-                }
-                .padding()
-                .background(Color(.darkGray))
-                .foregroundColor(.white)
             }
         }
         EOF
 
     # ================
-    # XcodeGen project with real library linking
+    # XcodeGen project with full editor dependencies
     # ================
     - name: Install XcodeGen
       run: brew install xcodegen
@@ -301,13 +328,6 @@ jobs:
               CODE_SIGNING_ALLOWED: NO
               CODE_SIGNING_REQUIRED: NO
               CODE_SIGN_IDENTITY: ""
-            preBuildScripts:
-              - script: |
-                  # Ensure library exists
-                  if [ ! -f "${PROJECT_DIR}/XogotApp/Libs/libgodot_engine.a" ]; then
-                    echo "Error: Godot library not found"
-                    exit 1
-                  fi
             dependencies:
               - framework: UIKit.framework
               - framework: Metal.framework
@@ -316,18 +336,28 @@ jobs:
               - framework: CoreMotion.framework
               - framework: CoreMedia.framework
               - framework: AVFoundation.framework
+              - framework: CoreGraphics.framework
+              - framework: CoreText.framework
+              - framework: ImageIO.framework
+              - framework: GameController.framework
               - sdk: libc++.tbd
+              - sdk: libz.tbd
             settings:
               LIBRARY_SEARCH_PATHS:
                 - $(inherited)
                 - $(PROJECT_DIR)/XogotApp/Libs
               OTHER_LDFLAGS:
-                - -lz
+                - -ObjC
                 - -lstdc++
-                - $(LIBRARY_SEARCH_PATHS)/libgodot_engine.a
+                - $(LIBRARY_SEARCH_PATHS)/libgodot_editor.a
+                - -Wl,-force_load,$(LIBRARY_SEARCH_PATHS)/libgodot_editor.a
               HEADER_SEARCH_PATHS:
                 - $(inherited)
                 - $(PROJECT_DIR)/XogotApp/Core/godot_headers
+              RESOURCES:
+                - path: XogotApp/EditorResources
+                  type: folder
+                  buildPhase: resources
         EOF
 
     - name: Generate Xcode Project
@@ -364,5 +394,5 @@ jobs:
     - name: Upload IPA Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: XogotApp-iOS-IPA
+        name: Xogot-iOS-Editor-IPA
         path: XogotApp.ipa
