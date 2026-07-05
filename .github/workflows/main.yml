@@ -30,7 +30,8 @@ jobs:
         <plist version="1.0">
         <dict>
             <key>CFBundleExecutable</key>
-            <string>XogotApp</string> <key>CFBundleIdentifier</key>
+            <string>XogotApp</string>
+            <key>CFBundleIdentifier</key>
             <string>com.xogot.editor</string>
             <key>CFBundleName</key>
             <string>Xogot</string>
@@ -113,7 +114,7 @@ jobs:
         EOF
 
     # ==========================================
-    # 4. SWIFTUI INTERFACE (Using Bridge)
+    # 4. SWIFTUI INTERFACE (Using Bridge + Your Custom Layout)
     # ==========================================
     - name: Generate SwiftUI Code
       run: |
@@ -123,7 +124,6 @@ jobs:
         @main
         struct XogotApp: App {
             init() {
-                // Test C++ Engine Bridge on Startup
                 print("Engine Initialized: \(GodotWrapper.getEngineVersion() ?? "Unknown")")
             }
             var body: some Scene {
@@ -135,16 +135,110 @@ jobs:
 
         struct MainEditorView: View {
             var body: some View {
-                VStack(spacing: 0) {
-                    TopToolbarView()
-                    Divider()
-                    ScrollView(.horizontal, showsIndicators: false) {
+                ZStack {
+                    Color.black.ignoresSafeArea()
+                    
+                    VStack(spacing: 0) {
+                        TopToolbar()
+                        
                         HStack(spacing: 0) {
                             SceneTreeView().frame(width: 250)
                             Divider()
-                            WorkspaceView().frame(width: 500)
+                            ViewportArea().frame(maxWidth: .infinity, maxHeight: .infinity)
                             Divider()
                             InspectorView().frame(width: 300)
+                        }
+                        
+                        BottomControls()
+                    }
+                }
+            }
+        }
+
+        // ---------- Top Toolbar ----------
+        struct TopToolbar: View {
+            var body: some View {
+                HStack {
+                    Image(systemName: "cursorarrow").padding()
+                    Image(systemName: "move.3d").padding()
+                    Image(systemName: "rotate.3d").padding()
+                    Spacer()
+                    Image(systemName: "play.fill").foregroundColor(.green).padding()
+                }
+                .background(Color(.darkGray).opacity(0.8))
+                .foregroundColor(.white)
+            }
+        }
+
+        // ---------- Scene Tree (left panel) ----------
+        struct SceneTreeView: View {
+            var body: some View {
+                List {
+                    Text("Node3D")
+                    Text("  ↳ CharacterBody3D").foregroundColor(.blue)
+                }
+                .listStyle(.plain)
+                .background(Color(UIColor.systemBackground))
+            }
+        }
+
+        // ---------- 3D Viewport ----------
+        struct ViewportArea: View {
+            var body: some View {
+                ZStack(alignment: .topLeading) {
+                    Text("Godot 3D Viewport (Rendered via C++)")
+                        .foregroundColor(.gray)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    
+                    PerspectiveSelector()
+                }
+                .background(Color.black)
+            }
+        }
+
+        struct PerspectiveSelector: View {
+            var body: some View {
+                HStack {
+                    Text("Perspective").font(.caption)
+                    Image(systemName: "house.fill")
+                }
+                .padding(8)
+                .background(Color.black.opacity(0.5))
+                .cornerRadius(8)
+                .foregroundColor(.white)
+                .padding()
+            }
+        }
+
+        // ---------- Inspector (right panel) ----------
+        struct InspectorView: View {
+            @State private var posX: Float = 0.0
+            @State private var posY: Float = 0.0
+            @State private var posZ: Float = 0.0
+            
+            var body: some View {
+                Form {
+                    Section(header: Text("Transform")) {
+                        VStack {
+                            Text("Position X: \(posX, specifier: "%.1f")")
+                            Slider(value: $posX, in: -10...10)
+                                .onChange(of: posX) { newValue in
+                                    GodotWrapper.updateNodeTransformX(newValue, y: posY, z: posZ)
+                                }
+                        }
+                        VStack {
+                            Text("Position Y: \(posY, specifier: "%.1f")")
+                            Slider(value: $posY, in: -10...10)
+                                .onChange(of: posY) { newValue in
+                                    GodotWrapper.updateNodeTransformX(posX, y: newValue, z: posZ)
+                                }
+                        }
+                        VStack {
+                            Text("Position Z: \(posZ, specifier: "%.1f")")
+                            Slider(value: $posZ, in: -10...10)
+                                .onChange(of: posZ) { newValue in
+                                    GodotWrapper.updateNodeTransformX(posX, y: posY, z: newValue)
+                                }
                         }
                     }
                 }
@@ -152,51 +246,18 @@ jobs:
             }
         }
 
-        struct TopToolbarView: View {
+        // ---------- Bottom Controls ----------
+        struct BottomControls: View {
             var body: some View {
                 HStack {
-                    Button("2D") {}
-                    Button("3D") {}
+                    Image(systemName: "arrow.counterclockwise")
                     Spacer()
-                    Button(action: {}) { Image(systemName: "play.fill") }
-                    Spacer()
-                }.padding().frame(height: 50)
-            }
-        }
-
-        struct SceneTreeView: View {
-            var body: some View {
-                List {
-                    Text("Node3D")
-                    Text("  ↳ CharacterBody3D").foregroundColor(.blue)
+                    Text("3D").bold()
+                    Text("2D")
                 }
-            }
-        }
-
-        struct WorkspaceView: View {
-            var body: some View {
-                Text("Godot 3D Viewport (Rendered via C++)")
-                    .foregroundColor(.gray)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color.black)
-            }
-        }
-
-        struct InspectorView: View {
-            @State private var posX: Float = 0.0
-            var body: some View {
-                Form {
-                    Section(header: Text("Transform")) {
-                        HStack {
-                            Text("Position X:")
-                            Slider(value: $posX, in: -10...10)
-                                .onChange(of: posX) { newValue in
-                                    // Send UI change to Godot C++ Core
-                                    GodotWrapper.updateNodeTransformX(newValue, y: 0, z: 0)
-                                }
-                        }
-                    }
-                }
+                .padding()
+                .background(Color(.darkGray))
+                .foregroundColor(.white)
             }
         }
         EOF
