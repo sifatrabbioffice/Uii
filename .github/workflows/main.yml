@@ -14,7 +14,6 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    # FIXED: pyyaml now installs correctly on modern macOS runners
     - name: Install Build Tools
       run: |
         brew install scons
@@ -25,11 +24,10 @@ jobs:
     # ================
     - name: Clone Godot (iOS Editor Fork)
       run: |
-        git clone --branch master --depth 1 https://github.com/timoschwarzer/godot.git godot_src
+        git clone --branch ios_editor --depth 1 https://github.com/timoschwarzer/godot.git godot_src
 
     # ================
     # Build Godot editor static library for iOS
-    # Target: editor, module_editor=yes, arch=arm64
     # ================
     - name: Build Godot Editor iOS Static Library
       run: |
@@ -38,10 +36,17 @@ jobs:
           module_editor=yes module_mono=no module_webrtc=no module_regex=no \
           progress=no -j$(sysctl -n hw.logicalcpu)
         mkdir -p ../libs
-        cp bin/libgodot.iphone.editor.arm64.a ../libs/libgodot_editor.a
+        # Correct output name: libgodot.ios.editor.arm64.a
+        cp bin/libgodot.ios.editor.arm64.a ../libs/libgodot_editor.a
         cp -r platform/iphone/godot_headers ../libs/headers
-        # Copy editor resources (icons, fonts, etc.) – the editor needs them at runtime
-        cp -r misc/dist/ios_tools/editor_data ../libs/editor_data
+        # Copy editor resources if they exist
+        if [ -d "misc/dist/ios_tools/editor_data" ]; then
+          cp -r misc/dist/ios_tools/editor_data ../libs/editor_data
+        elif [ -d "misc/dist/ios/editor_data" ]; then
+          cp -r misc/dist/ios/editor_data ../libs/editor_data
+        else
+          echo "Warning: editor_data folder not found, skipping."
+        fi
 
     # ================
     # Create app directories
@@ -58,7 +63,9 @@ jobs:
       run: |
         cp libs/libgodot_editor.a XogotApp/Libs/
         cp -r libs/headers XogotApp/Core/godot_headers
-        cp -r libs/editor_data XogotApp/EditorResources
+        if [ -d "libs/editor_data" ]; then
+          cp -r libs/editor_data XogotApp/EditorResources
+        fi
 
     # ================
     # Generate Info.plist
@@ -100,7 +107,7 @@ jobs:
         EOF
 
     # ================
-    # C++ Core – now initializes and runs the full editor
+    # C++ Core – initializes and runs the full editor
     # ================
     - name: Generate C++ Core (Editor integration)
       run: |
@@ -140,11 +147,10 @@ jobs:
         }
 
         void GodotEngine::updateNodeTransform(float x, float y, float z) {
-            // Editor‑specific node manipulation (will be handled by editor GUI)
+            // Editor‑specific node manipulation
         }
 
         void GodotEngine::initEditor(int argc, char* argv[], void* windowHandle) {
-            // Set up iOS window handle (UIView layer)
             Error err = Main::setup("iphone", argc, argv, false);
             if (err != OK) {
                 ERR_PRINT("Failed to setup main");
@@ -165,7 +171,7 @@ jobs:
         EOF
 
     # ================
-    # Objective-C++ Bridge – expose editor start/stop and touch forwarding
+    # Objective-C++ Bridge
     # ================
     - name: Generate Objective-C++ Bridge
       run: |
@@ -236,7 +242,7 @@ jobs:
         EOF
 
     # ================
-    # SwiftUI Editor Host – wraps the Godot editor UIView and handles touch
+    # SwiftUI Editor Host
     # ================
     - name: Generate SwiftUI Code
       run: |
@@ -263,24 +269,11 @@ jobs:
             }
             
             func updateUIView(_ uiView: UIView, context: Context) {}
-            
-            // Touch forwarding is handled in a custom UIView subclass
-            class TouchHandlerView: UIView {
-                override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-                    touches.forEach { GodotWrapper.forwardTouch($0, eventType: 0) }
-                }
-                override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-                    touches.forEach { GodotWrapper.forwardTouch($0, eventType: 1) }
-                }
-                override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-                    touches.forEach { GodotWrapper.forwardTouch($0, eventType: 2) }
-                }
-            }
         }
         EOF
 
     # ================
-    # XcodeGen project with full editor dependencies
+    # XcodeGen project
     # ================
     - name: Install XcodeGen
       run: brew install xcodegen
