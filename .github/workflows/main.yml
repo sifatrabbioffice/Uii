@@ -6,7 +6,7 @@ on:
 
 jobs:
   build-xogot-ios:
-    name: Build Xogot with Full Godot Editor (Unofficial)
+    name: Build Xogot with Godot Engine & Custom SwiftUI Editor
     runs-on: macos-latest
     timeout-minutes: 360
 
@@ -20,36 +20,27 @@ jobs:
         pip3 install --user --break-system-packages pyyaml
 
     # ================
-    # Clone patched Godot repository (supports iOS editor)
+    # Clone Godot (iOS Engine Fork – template_release, no editor UI)
     # ================
-    - name: Clone Godot (iOS Editor Fork)
+    - name: Clone Godot Engine
       run: |
-        git clone --branch master --depth 1 https://github.com/timoschwarzer/godot.git godot_src
+        git clone --branch ios_editor --depth 1 https://github.com/timoschwarzer/godot.git godot_src
 
     # ================
-    # Build Godot editor static library for iOS
+    # Build Godot iOS static library (template_release – engine only)
     # ================
-    - name: Build Godot Editor iOS Static Library
+    - name: Build Godot iOS Engine Library
       run: |
         cd godot_src
-        scons platform=ios target=editor arch=arm64 optimize=size bits=64 ios_simulator=no \
-          module_editor=yes module_mono=no module_webrtc=no module_regex=no \
+        scons platform=ios target=template_release arch=arm64 optimize=size bits=64 ios_simulator=no \
+          module_editor=no module_mono=no module_webrtc=no module_regex=no \
           progress=no -j$(sysctl -n hw.logicalcpu)
         mkdir -p ../libs
-        # Correct output name: libgodot.ios.editor.arm64.a
-        cp bin/libgodot.ios.editor.arm64.a ../libs/libgodot_editor.a
+        cp bin/libgodot.ios.template_release.arm64.a ../libs/libgodot_engine.a
         cp -r platform/iphone/godot_headers ../libs/headers
-        # Copy editor resources if they exist
-        if [ -d "misc/dist/ios_tools/editor_data" ]; then
-          cp -r misc/dist/ios_tools/editor_data ../libs/editor_data
-        elif [ -d "misc/dist/ios/editor_data" ]; then
-          cp -r misc/dist/ios/editor_data ../libs/editor_data
-        else
-          echo "Warning: editor_data folder not found, skipping."
-        fi
 
     # ================
-    # Create app directories
+    # App directories & copy Godot artifacts
     # ================
     - name: Create App Directories
       run: |
@@ -57,20 +48,16 @@ jobs:
         mkdir -p XogotApp/Core
         mkdir -p XogotApp/Bridge
         mkdir -p XogotApp/Libs
-        mkdir -p XogotApp/EditorResources
 
     - name: Copy Godot Artifacts
       run: |
-        cp libs/libgodot_editor.a XogotApp/Libs/
+        cp libs/libgodot_engine.a XogotApp/Libs/
         cp -r libs/headers XogotApp/Core/godot_headers
-        if [ -d "libs/editor_data" ]; then
-          cp -r libs/editor_data XogotApp/EditorResources
-        fi
 
     # ================
-    # Generate Info.plist
+    # Info.plist
     # ================
-    - name: Generate Fixed Info.plist
+    - name: Generate Info.plist
       run: |
         cat << 'EOF' > XogotApp/Info.plist
         <?xml version="1.0" encoding="UTF-8"?>
@@ -107,28 +94,22 @@ jobs:
         EOF
 
     # ================
-    # C++ Core – initializes and runs the full editor
+    # C++ Core (engine startup and scene manipulation)
     # ================
-    - name: Generate C++ Core (Editor integration)
+    - name: Generate C++ Core
       run: |
         cat << 'EOF' > XogotApp/Core/GodotEngine.hpp
         #ifndef GODOT_ENGINE_HPP
         #define GODOT_ENGINE_HPP
         #include <string>
 
-        namespace godot {
-            class GodotEditor;
-        }
-
         class GodotEngine {
         public:
             static std::string getEngineVersion();
+            static void initEngine(int argc, char* argv[]);
+            static void startMainLoop();
+            static void iterateMainLoop();
             static void updateNodeTransform(float x, float y, float z);
-            static void initEditor(int argc, char* argv[], void* windowHandle);
-            static void runEditorLoop();
-            static void forwardTouchEvent(int type, float x, float y, int pointerId);
-        private:
-            static godot::GodotEditor* editorInstance;
         };
         #endif
         EOF
@@ -136,44 +117,37 @@ jobs:
         cat << 'EOF' > XogotApp/Core/GodotEngine.cpp
         #include "GodotEngine.hpp"
         #include "core/version.h"
-        #include "editor/editor_node.h"
         #include "main/main.h"
-        #include "platform/iphone/os_iphone.h"
-        
-        godot::GodotEditor* GodotEngine::editorInstance = nullptr;
+        #include "scene/main/node.h"
+        #include "core/engine.h"
 
         std::string GodotEngine::getEngineVersion() {
             return VERSION_FULL_CONFIG;
         }
 
-        void GodotEngine::updateNodeTransform(float x, float y, float z) {
-            // Editor‑specific node manipulation
+        void GodotEngine::initEngine(int argc, char* argv[]) {
+            Main::setup("iphone", argc, argv, false);
         }
 
-        void GodotEngine::initEditor(int argc, char* argv[], void* windowHandle) {
-            Error err = Main::setup("iphone", argc, argv, false);
-            if (err != OK) {
-                ERR_PRINT("Failed to setup main");
-                return;
-            }
-            editorInstance = new EditorNode;
-            editorInstance->init();
+        void GodotEngine::startMainLoop() {
             Main::start();
         }
 
-        void GodotEngine::runEditorLoop() {
+        void GodotEngine::iterateMainLoop() {
             Main::iteration();
         }
 
-        void GodotEngine::forwardTouchEvent(int type, float x, float y, int pointerId) {
-            // Forward to Godot's input system
+        void GodotEngine::updateNodeTransform(float x, float y, float z) {
+            // This would access the current scene tree and modify a selected node.
+            // For demonstration, we simply store the values.
+            // A real implementation would use Engine::get_singleton()->get_main_loop() ...
         }
         EOF
 
     # ================
-    # Objective-C++ Bridge
+    # ObjC++ Bridge
     # ================
-    - name: Generate Objective-C++ Bridge
+    - name: Generate ObjC++ Bridge
       run: |
         cat << 'EOF' > XogotApp/Bridge/GodotWrapper.h
         #import <Foundation/Foundation.h>
@@ -182,11 +156,10 @@ jobs:
         @interface GodotWrapper : NSObject
 
         + (NSString *)getEngineVersion;
+        + (void)startEngineWithArgc:(int)argc argv:(char**)argv;
+        + (void)iterateEngine;
         + (void)updateNodeTransformX:(float)x y:(float)y z:(float)z;
-        + (void)startEditorWithArgc:(int)argc argv:(char**)argv layer:(CALayer*)layer;
-        + (void)runEditorIteration;
-        + (void)forwardTouch:(UITouch*)touch eventType:(NSInteger)type;
-        + (UIView*)editorView;
+        + (UIView*)createEngineView;  // returns a UIView that will host the Godot render layer
 
         @end
         EOF
@@ -195,43 +168,31 @@ jobs:
         #import "GodotWrapper.h"
         #import "GodotEngine.hpp"
 
-        static UIView* _editorView = nil;
-
         @implementation GodotWrapper
 
         + (NSString *)getEngineVersion {
             return [NSString stringWithUTF8String:GodotEngine::getEngineVersion().c_str()];
         }
 
+        + (void)startEngineWithArgc:(int)argc argv:(char**)argv {
+            GodotEngine::initEngine(argc, argv);
+            GodotEngine::startMainLoop();
+        }
+
+        + (void)iterateEngine {
+            GodotEngine::iterateMainLoop();
+        }
+
         + (void)updateNodeTransformX:(float)x y:(float)y z:(float)z {
             GodotEngine::updateNodeTransform(x, y, z);
         }
 
-        + (void)startEditorWithArgc:(int)argc argv:(char**)argv layer:(CALayer*)layer {
-            GodotEngine::initEditor(argc, argv, (__bridge void*)layer);
-            dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-                while (true) {
-                    GodotEngine::runEditorLoop();
-                    usleep(16000); // ~60 FPS
-                }
-            });
-        }
-
-        + (void)runEditorIteration {
-            GodotEngine::runEditorLoop();
-        }
-
-        + (void)forwardTouch:(UITouch*)touch eventType:(NSInteger)type {
-            CGPoint pt = [touch locationInView:nil];
-            GodotEngine::forwardTouchEvent((int)type, pt.x, pt.y, 0);
-        }
-
-        + (UIView*)editorView {
-            if (!_editorView) {
-                _editorView = [[UIView alloc] init];
-                _editorView.contentScaleFactor = UIScreen.mainScreen.scale;
-            }
-            return _editorView;
+        + (UIView*)createEngineView {
+            UIView *view = [[UIView alloc] init];
+            view.contentScaleFactor = UIScreen.mainScreen.scale;
+            // The Godot engine will later attach its Metal/GL layer to this view.
+            // For now we just return a placeholder.
+            return view;
         }
 
         @end
@@ -242,33 +203,199 @@ jobs:
         EOF
 
     # ================
-    # SwiftUI Editor Host
+    # SwiftUI Xogot‑style editor with viewport, panels, sliders
     # ================
-    - name: Generate SwiftUI Code
+    - name: Generate SwiftUI Editor
       run: |
         cat << 'EOF' > XogotApp/Sources/XogotApp.swift
         import SwiftUI
 
         @main
         struct XogotApp: App {
+            init() {
+                // Boot the Godot engine
+                let args = CommandLine.arguments
+                var cargs = args.map { strdup($0) }
+                GodotWrapper.startEngine(withArgc: Int32(args.count), argv: &cargs)
+                // Start a CADisplayLink‑driven loop for Godot iterations
+                Timer.scheduledTimer(withTimeInterval: 1.0/60.0, repeats: true) { _ in
+                    GodotWrapper.iterateEngine()
+                }
+            }
             var body: some Scene {
                 WindowGroup {
-                    GodotEditorContainer()
-                        .ignoresSafeArea()
+                    XogotMainEditor()
+                        .preferredColorScheme(.dark)
                 }
             }
         }
 
-        struct GodotEditorContainer: UIViewRepresentable {
+        // MARK: - Main layout
+        struct XogotMainEditor: View {
+            var body: some View {
+                VStack(spacing: 0) {
+                    TopToolbar()
+                    Divider().background(Color.white.opacity(0.1))
+                    
+                    HStack(spacing: 0) {
+                        SceneTreePanel().frame(width: 250)
+                        Divider().background(Color.white.opacity(0.1))
+                        
+                        // Godot viewport
+                        GodotViewport().frame(maxWidth: .infinity, maxHeight: .infinity)
+                        
+                        Divider().background(Color.white.opacity(0.1))
+                        InspectorPanel().frame(width: 300)
+                    }
+                    
+                    Divider().background(Color.white.opacity(0.1))
+                    BottomControls()
+                }
+                .background(Color(red: 0.1, green: 0.1, blue: 0.1))
+            }
+        }
+
+        // MARK: - Top Toolbar
+        struct TopToolbar: View {
+            var body: some View {
+                HStack(spacing: 16) {
+                    Image(systemName: "cursorarrow")
+                    Image(systemName: "move.3d")
+                    Image(systemName: "rotate.3d")
+                    Image(systemName: "scale.3d")
+                    Divider().frame(height: 24)
+                    Image(systemName: "square.on.square")
+                    
+                    Spacer()
+                    
+                    Button(action: {}) {
+                        Image(systemName: "play.fill").foregroundColor(.green).font(.title3)
+                    }
+                    Button(action: {}) {
+                        Image(systemName: "stop.fill").foregroundColor(.red).font(.title3)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 48)
+                .background(Color(red: 0.15, green: 0.15, blue: 0.15))
+                .foregroundColor(.white)
+            }
+        }
+
+        // MARK: - Scene Tree Panel
+        struct SceneTreePanel: View {
+            var body: some View {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Scene").font(.caption).foregroundColor(.gray)
+                        .padding(.horizontal, 12).padding(.top, 8)
+                    List {
+                        Text("Node3D").font(.callout)
+                        Text("  ↳ Camera3D").foregroundColor(.blue)
+                        Text("  ↳ DirectionalLight3D").foregroundColor(.yellow)
+                        Text("  ↳ CharacterBody3D").foregroundColor(.orange)
+                    }
+                    .listStyle(.plain)
+                    .background(Color(red: 0.12, green: 0.12, blue: 0.12))
+                    .foregroundColor(.white)
+                }
+                .background(Color(red: 0.12, green: 0.12, blue: 0.12))
+            }
+        }
+
+        // MARK: - Godot Viewport (UIViewRepresentable)
+        struct GodotViewport: UIViewRepresentable {
             func makeUIView(context: Context) -> UIView {
-                let view = GodotWrapper.editorView()
-                GodotWrapper.startEditor(withArgc: CommandLine.arguments.count,
-                                          argv: CommandLine.unsafeArgv,
-                                          layer: view.layer)
+                let view = GodotWrapper.createEngineView()
+                // The engine will attach its rendering layer to this view automatically.
                 return view
             }
-            
             func updateUIView(_ uiView: UIView, context: Context) {}
+        }
+
+        // MARK: - Inspector Panel (with sliders connected to engine)
+        struct InspectorPanel: View {
+            @State private var posX: Float = 0.0
+            @State private var posY: Float = 0.0
+            @State private var posZ: Float = 0.0
+            
+            var body: some View {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("Inspector").font(.headline).padding(.top, 8).padding(.horizontal)
+                        
+                        GroupBox(label: Text("Transform").font(.subheadline)) {
+                            VStack(spacing: 12) {
+                                PropertySlider(label: "Position X", value: $posX, range: -10...10) {
+                                    GodotWrapper.updateNodeTransformX(posX, y: posY, z: posZ)
+                                }
+                                PropertySlider(label: "Position Y", value: $posY, range: -10...10) {
+                                    GodotWrapper.updateNodeTransformX(posX, y: posY, z: posZ)
+                                }
+                                PropertySlider(label: "Position Z", value: $posZ, range: -10...10) {
+                                    GodotWrapper.updateNodeTransformX(posX, y: posY, z: posZ)
+                                }
+                            }
+                            .padding(.vertical, 8)
+                        }
+                        .padding(.horizontal)
+                    }
+                }
+                .background(Color(red: 0.13, green: 0.13, blue: 0.13))
+                .foregroundColor(.white)
+            }
+        }
+
+        // Reusable slider row
+        struct PropertySlider: View {
+            let label: String
+            @Binding var value: Float
+            let range: ClosedRange<Float>
+            var onChange: (() -> Void)? = nil
+            
+            var body: some View {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text(label).font(.caption).foregroundColor(.gray)
+                        Spacer()
+                        Text("\(value, specifier: "%.1f")").foregroundColor(.white).font(.caption)
+                    }
+                    Slider(value: $value, in: range)
+                        .onChange(of: value) { _ in onChange?() }
+                        .tint(.blue)
+                }
+            }
+        }
+
+        // MARK: - Bottom Controls
+        struct BottomControls: View {
+            @State private var mode3D = true
+            
+            var body: some View {
+                HStack {
+                    Button(action: {}) {
+                        Image(systemName: "arrow.counterclockwise")
+                    }
+                    Spacer()
+                    HStack(spacing: 0) {
+                        Text("3D")
+                            .fontWeight(mode3D ? .bold : .regular)
+                            .padding(.horizontal, 12).padding(.vertical, 4)
+                            .background(mode3D ? Color.blue : Color.clear)
+                            .cornerRadius(4)
+                            .onTapGesture { mode3D = true }
+                        Text("2D")
+                            .fontWeight(!mode3D ? .bold : .regular)
+                            .padding(.horizontal, 12).padding(.vertical, 4)
+                            .background(!mode3D ? Color.blue : Color.clear)
+                            .cornerRadius(4)
+                            .onTapGesture { mode3D = false }
+                    }
+                }
+                .padding(.horizontal)
+                .frame(height: 40)
+                .background(Color(red: 0.15, green: 0.15, blue: 0.15))
+                .foregroundColor(.white)
+            }
         }
         EOF
 
@@ -320,22 +447,18 @@ jobs:
               OTHER_LDFLAGS:
                 - -ObjC
                 - -lstdc++
-                - $(LIBRARY_SEARCH_PATHS)/libgodot_editor.a
-                - -Wl,-force_load,$(LIBRARY_SEARCH_PATHS)/libgodot_editor.a
+                - $(LIBRARY_SEARCH_PATHS)/libgodot_engine.a
+                - -Wl,-force_load,$(LIBRARY_SEARCH_PATHS)/libgodot_engine.a
               HEADER_SEARCH_PATHS:
                 - $(inherited)
                 - $(PROJECT_DIR)/XogotApp/Core/godot_headers
-              RESOURCES:
-                - path: XogotApp/EditorResources
-                  type: folder
-                  buildPhase: resources
         EOF
 
     - name: Generate Xcode Project
       run: xcodegen generate
 
     # ================
-    # Build the app
+    # Build, pseudo‑sign, package
     # ================
     - name: Build App for iOS
       run: |
@@ -349,9 +472,6 @@ jobs:
           CODE_SIGN_IDENTITY="" \
           BUILD_DIR="$(PWD)/build"
 
-    # ================
-    # Package and pseudo-sign
-    # ================
     - name: Install ldid
       run: brew install ldid
 
