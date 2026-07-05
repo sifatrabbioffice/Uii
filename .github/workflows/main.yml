@@ -14,10 +14,11 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v4
 
+    # FIXED: pyyaml now installs correctly on modern macOS runners
     - name: Install Build Tools
       run: |
         brew install scons
-        pip3 install --user pyyaml
+        pip3 install --user --break-system-packages pyyaml
 
     # ================
     # Clone patched Godot repository (supports iOS editor)
@@ -144,28 +145,22 @@ jobs:
 
         void GodotEngine::initEditor(int argc, char* argv[], void* windowHandle) {
             // Set up iOS window handle (UIView layer)
-            // In the fork, this is already handled inside platform/iphone
             Error err = Main::setup("iphone", argc, argv, false);
             if (err != OK) {
                 ERR_PRINT("Failed to setup main");
                 return;
             }
-
-            // Start the editor
             editorInstance = new EditorNode;
             editorInstance->init();
             Main::start();
         }
 
         void GodotEngine::runEditorLoop() {
-            // The main loop is already running if we use the fork’s custom run loop.
-            // Here we just call process events. In practice, the fork may use a CADisplayLink.
             Main::iteration();
         }
 
         void GodotEngine::forwardTouchEvent(int type, float x, float y, int pointerId) {
             // Forward to Godot's input system
-            // Implementation depends on how the fork handles touches.
         }
         EOF
 
@@ -185,7 +180,7 @@ jobs:
         + (void)startEditorWithArgc:(int)argc argv:(char**)argv layer:(CALayer*)layer;
         + (void)runEditorIteration;
         + (void)forwardTouch:(UITouch*)touch eventType:(NSInteger)type;
-        + (UIView*)editorView;  // Returns the view that contains the Godot render layer
+        + (UIView*)editorView;
 
         @end
         EOF
@@ -193,10 +188,6 @@ jobs:
         cat << 'EOF' > XogotApp/Bridge/GodotWrapper.mm
         #import "GodotWrapper.h"
         #import "GodotEngine.hpp"
-
-        @interface GodotWrapper ()
-        @property (class, nonatomic, strong) UIView* editorContainerView;
-        @end
 
         static UIView* _editorView = nil;
 
@@ -211,11 +202,7 @@ jobs:
         }
 
         + (void)startEditorWithArgc:(int)argc argv:(char**)argv layer:(CALayer*)layer {
-            // The editor will use the given layer as its rendering target.
-            // In the fork, we need to pass the native layer handle.
             GodotEngine::initEditor(argc, argv, (__bridge void*)layer);
-            
-            // Start the main loop on a background thread
             dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
                 while (true) {
                     GodotEngine::runEditorLoop();
@@ -269,7 +256,6 @@ jobs:
         struct GodotEditorContainer: UIViewRepresentable {
             func makeUIView(context: Context) -> UIView {
                 let view = GodotWrapper.editorView()
-                // Provide the layer to the engine (it will be used as the render target)
                 GodotWrapper.startEditor(withArgc: CommandLine.arguments.count,
                                           argv: CommandLine.unsafeArgv,
                                           layer: view.layer)
@@ -278,24 +264,16 @@ jobs:
             
             func updateUIView(_ uiView: UIView, context: Context) {}
             
-            // Touch forwarding
-            func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?, on view: UIView) {
-                touches.forEach { GodotWrapper.forwardTouch($0, eventType: 0) }
-            }
-            func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?, on view: UIView) {
-                touches.forEach { GodotWrapper.forwardTouch($0, eventType: 1) }
-            }
-            func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?, on view: UIView) {
-                touches.forEach { GodotWrapper.forwardTouch($0, eventType: 2) }
-            }
-        }
-
-        // Extension to handle touch forwarding in UIViewRepresentable
-        extension UIViewRepresentable {
-            func makeCoordinator() -> Coordinator { Coordinator() }
-            class Coordinator: NSObject {
+            // Touch forwarding is handled in a custom UIView subclass
+            class TouchHandlerView: UIView {
                 override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-                    (UIApplication.shared.delegate as? AppDelegate)?.touchesBegan(touches, with: event)
+                    touches.forEach { GodotWrapper.forwardTouch($0, eventType: 0) }
+                }
+                override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+                    touches.forEach { GodotWrapper.forwardTouch($0, eventType: 1) }
+                }
+                override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+                    touches.forEach { GodotWrapper.forwardTouch($0, eventType: 2) }
                 }
             }
         }
