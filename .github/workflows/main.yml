@@ -147,15 +147,13 @@ jobs:
         EOF
 
     # ================
-    # Embedded plugin stubs (satisfy linker requirements)
+    # Embedded plugin stubs (C++ linkage, no extern "C")
     # ================
     - name: Generate Embedded Plugin Stubs
       run: |
         cat << 'EOF' > XogotApp/Core/plugin_stubs.cpp
-        extern "C" {
         void godot_apple_embedded_plugins_initialize() {}
         void godot_apple_embedded_plugins_deinitialize() {}
-        }
         EOF
 
     # ================
@@ -398,7 +396,7 @@ jobs:
         EOF
 
     # ================
-    # XcodeGen project (C++17, bridging header, stubs included)
+    # XcodeGen project
     # ================
     - name: Install XcodeGen
       run: brew install xcodegen
