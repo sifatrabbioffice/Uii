@@ -25,7 +25,7 @@ jobs:
     # ================
     - name: Clone Godot (iOS Editor Fork)
       run: |
-        git clone --branch ios_editor --depth 1 https://github.com/timoschwarzer/godot.git godot_src
+        git clone --branch master --depth 1 https://github.com/timoschwarzer/godot.git godot_src
 
     # ================
     # Build Godot editor static library for iOS
