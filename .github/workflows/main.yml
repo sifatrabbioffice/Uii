@@ -44,7 +44,7 @@ jobs:
     - name: Copy generated headers
       run: |
         # Find platform_config.h and any other platform-specific generated headers
-        find godot_src/bin -name "platform_config.h" -exec cp {} godot_src/platform/iphone/ \;
+        find godot_src/bin -name "platform_config.h" -exec cp {} godot_src/platform/ios/ \;
 
     # ================
     # App directories & copy Godot artifacts
@@ -396,7 +396,7 @@ jobs:
         EOF
 
     # ================
-    # XcodeGen project (unchanged – still includes godot_src/platform/iphone)
+    # XcodeGen project (unchanged – still includes godot_src/platform/ios)
     # ================
     - name: Install XcodeGen
       run: brew install xcodegen
@@ -433,7 +433,7 @@ jobs:
               HEADER_SEARCH_PATHS:
                 - $(inherited)
                 - $(PROJECT_DIR)/godot_src
-                - $(PROJECT_DIR)/godot_src/platform/iphone
+                - $(PROJECT_DIR)/godot_src/platform/ios
             dependencies:
               - framework: UIKit.framework
               - framework: Metal.framework
