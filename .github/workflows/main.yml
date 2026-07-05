@@ -1,122 +1,4 @@
-name: Xogot Complete iOS Architecture Build
-
-on:
-  push:
-    branches: [ "main" ]
-
-jobs:
-  build-xogot-ios:
-    name: Build Xogot with Godot Core (Fix null descriptor)
-    runs-on: macos-latest
-
-    steps:
-    - name: Checkout Code
-      uses: actions/checkout@v4
-
-    - name: Create Architecture Directories
-      run: |
-        mkdir -p XogotApp/Sources
-        mkdir -p XogotApp/Core
-        mkdir -p XogotApp/Bridge
-
-    # ==========================================
-    # 1. FIXED INFO.PLIST (The cause of the crash)
-    # ==========================================
-    - name: Generate Fixed Info.plist
-      run: |
-        cat << 'EOF' > XogotApp/Info.plist
-        <?xml version="1.0" encoding="UTF-8"?>
-        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-        <plist version="1.0">
-        <dict>
-            <key>CFBundleExecutable</key>
-            <string>XogotApp</string>
-            <key>CFBundleIdentifier</key>
-            <string>com.xogot.editor</string>
-            <key>CFBundleName</key>
-            <string>Xogot</string>
-            <key>CFBundlePackageType</key>
-            <string>APPL</string>
-            <key>CFBundleShortVersionString</key>
-            <string>1.0</string>
-            <key>CFBundleVersion</key>
-            <string>1</string>
-            <key>LSRequiresIPhoneOS</key>
-            <true/>
-            <key>UILaunchStoryboardName</key>
-            <string>LaunchScreen</string>
-            <key>UIApplicationSceneManifest</key>
-            <dict>
-                <key>UIApplicationSupportsMultipleScenes</key>
-                <false/>
-            </dict>
-        </dict>
-        </plist>
-        EOF
-
-    # ==========================================
-    # 2. GODOT C++ CORE ARCHITECTURE
-    # ==========================================
-    - name: Generate Godot C++ Core
-      run: |
-        cat << 'EOF' > XogotApp/Core/GodotEngine.hpp
-        #ifndef GODOT_ENGINE_HPP
-        #define GODOT_ENGINE_HPP
-        #include <string>
-        class GodotEngine {
-        public:
-            static std::string getEngineVersion();
-            static void updateNodeTransform(float x, float y, float z);
-        };
-        #endif
-        EOF
-        
-        cat << 'EOF' > XogotApp/Core/GodotEngine.cpp
-        #include "GodotEngine.hpp"
-        std::string GodotEngine::getEngineVersion() {
-            return "Godot Core 4.x (Xogot Build)";
-        }
-        void GodotEngine::updateNodeTransform(float x, float y, float z) {
-            // Godot C++ Engine Logic will execute here
-        }
-        EOF
-
-    # ==========================================
-    # 3. OBJECTIVE-C++ BRIDGE (Crucial for Swift <-> C++)
-    # ==========================================
-    - name: Generate Objective-C++ Bridge
-      run: |
-        cat << 'EOF' > XogotApp/Bridge/GodotWrapper.h
-        #import <Foundation/Foundation.h>
-        @interface GodotWrapper : NSObject
-        + (NSString *)getEngineVersion;
-        + (void)updateNodeTransformX:(float)x y:(float)y z:(float)z;
-        @end
-        EOF
-
-        cat << 'EOF' > XogotApp/Bridge/GodotWrapper.mm
-        #import "GodotWrapper.h"
-        #import "GodotEngine.hpp"
-        
-        @implementation GodotWrapper
-        + (NSString *)getEngineVersion {
-            std::string version = GodotEngine::getEngineVersion();
-            return [NSString stringWithUTF8String:version.c_str()];
-        }
-        + (void)updateNodeTransformX:(float)x y:(float)y z:(float)z {
-            GodotEngine::updateNodeTransform(x, y, z);
-        }
-        @end
-        EOF
-
-        cat << 'EOF' > XogotApp/Bridge/BridgingHeader.h
-        #import "GodotWrapper.h"
-        EOF
-
-    # ==========================================
-    # 4. SWIFTUI INTERFACE (Using Bridge + Your Custom Layout)
-    # ==========================================
-    - name: Generate SwiftUI Code
+- name: Generate SwiftUI Code
       run: |
         cat << 'EOF' > XogotApp/Sources/XogotApp.swift
         import SwiftUI
@@ -129,67 +11,123 @@ jobs:
             var body: some Scene {
                 WindowGroup {
                     MainEditorView()
+                        .preferredColorScheme(.dark) // Force dark game‑editor style
                 }
             }
         }
 
+        // MARK: - Main Editor Layout
         struct MainEditorView: View {
             var body: some View {
-                ZStack {
-                    Color.black.ignoresSafeArea()
+                VStack(spacing: 0) {
+                    TopToolbar()
+                    Divider().background(Color.white.opacity(0.1))
                     
-                    VStack(spacing: 0) {
-                        TopToolbar()
+                    HStack(spacing: 0) {
+                        SceneTreeView()
+                            .frame(width: 250)
+                        Divider().background(Color.white.opacity(0.1))
                         
-                        HStack(spacing: 0) {
-                            SceneTreeView().frame(width: 250)
-                            Divider()
-                            ViewportArea().frame(maxWidth: .infinity, maxHeight: .infinity)
-                            Divider()
-                            InspectorView().frame(width: 300)
-                        }
+                        ViewportArea()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                         
-                        BottomControls()
+                        Divider().background(Color.white.opacity(0.1))
+                        InspectorView()
+                            .frame(width: 300)
                     }
+                    
+                    Divider().background(Color.white.opacity(0.1))
+                    BottomControls()
                 }
+                .background(Color(red: 0.1, green: 0.1, blue: 0.1)) // Dark background
             }
         }
 
-        // ---------- Top Toolbar ----------
+        // MARK: - Top Toolbar (Game editor style)
         struct TopToolbar: View {
             var body: some View {
-                HStack {
-                    Image(systemName: "cursorarrow").padding()
-                    Image(systemName: "move.3d").padding()
-                    Image(systemName: "rotate.3d").padding()
+                HStack(spacing: 16) {
+                    // Tool icons
+                    Image(systemName: "cursorarrow")
+                    Image(systemName: "move.3d")
+                    Image(systemName: "rotate.3d")
+                    Image(systemName: "scale.3d")
+                    Divider().frame(height: 24)
+                    Image(systemName: "square.on.square") // Snap
+                    
                     Spacer()
-                    Image(systemName: "play.fill").foregroundColor(.green).padding()
+                    
+                    // Play / Stop
+                    Button(action: {}) {
+                        Image(systemName: "play.fill")
+                            .foregroundColor(.green)
+                            .font(.title3)
+                    }
+                    Button(action: {}) {
+                        Image(systemName: "stop.fill")
+                            .foregroundColor(.red)
+                            .font(.title3)
+                    }
                 }
-                .background(Color(.darkGray).opacity(0.8))
+                .padding(.horizontal, 12)
+                .frame(height: 48)
+                .background(Color(red: 0.15, green: 0.15, blue: 0.15))
                 .foregroundColor(.white)
             }
         }
 
-        // ---------- Scene Tree (left panel) ----------
+        // MARK: - Scene Tree (Left panel)
         struct SceneTreeView: View {
             var body: some View {
-                List {
-                    Text("Node3D")
-                    Text("  ↳ CharacterBody3D").foregroundColor(.blue)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Scene")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                        .padding(.horizontal, 12)
+                        .padding(.top, 8)
+                    List {
+                        Text("Node3D").font(.callout)
+                        Text("  ↳ Camera3D").foregroundColor(.blue)
+                        Text("  ↳ DirectionalLight3D").foregroundColor(.yellow)
+                        Text("  ↳ CharacterBody3D").foregroundColor(.orange)
+                    }
+                    .listStyle(.plain)
+                    .background(Color(red: 0.12, green: 0.12, blue: 0.12))
+                    .foregroundColor(.white)
                 }
-                .listStyle(.plain)
-                .background(Color(UIColor.systemBackground))
+                .background(Color(red: 0.12, green: 0.12, blue: 0.12))
             }
         }
 
-        // ---------- 3D Viewport ----------
+        // MARK: - 3D Viewport with Grid
         struct ViewportArea: View {
             var body: some View {
                 ZStack(alignment: .topLeading) {
-                    Text("Godot 3D Viewport (Rendered via C++)")
-                        .foregroundColor(.gray)
+                    // Simulated 3D grid (simple version)
+                    Canvas { context, size in
+                        let gridSize: CGFloat = 20
+                        let stepX = size.width / gridSize
+                        let stepY = size.height / gridSize
+                        var path = Path()
+                        for i in 0...Int(gridSize) {
+                            let x = CGFloat(i) * stepX
+                            path.move(to: CGPoint(x: x, y: 0))
+                            path.addLine(to: CGPoint(x: x, y: size.height))
+                        }
+                        for i in 0...Int(gridSize) {
+                            let y = CGFloat(i) * stepY
+                            path.move(to: CGPoint(x: 0, y: y))
+                            path.addLine(to: CGPoint(x: size.width, y: y))
+                        }
+                        context.stroke(path, with: .color(.gray.opacity(0.2)), lineWidth: 0.5)
+                    }
+                    
+                    // Center message
+                    Text("Godot 3D Viewport")
+                        .foregroundColor(.white.opacity(0.4))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     
+                    // Perspective pill
                     PerspectiveSelector()
                 }
                 .background(Color.black)
@@ -198,136 +136,120 @@ jobs:
 
         struct PerspectiveSelector: View {
             var body: some View {
-                HStack {
+                HStack(spacing: 4) {
                     Text("Perspective").font(.caption)
-                    Image(systemName: "house.fill")
+                    Image(systemName: "house.fill").font(.caption)
                 }
-                .padding(8)
-                .background(Color.black.opacity(0.5))
-                .cornerRadius(8)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color.black.opacity(0.7))
+                .cornerRadius(12)
                 .foregroundColor(.white)
                 .padding()
             }
         }
 
-        // ---------- Inspector (right panel) ----------
+        // MARK: - Inspector (Right panel)
         struct InspectorView: View {
             @State private var posX: Float = 0.0
             @State private var posY: Float = 0.0
             @State private var posZ: Float = 0.0
+            @State private var rotX: Float = 0.0
+            @State private var scale: Float = 1.0
             
             var body: some View {
-                Form {
-                    Section(header: Text("Transform")) {
-                        VStack {
-                            Text("Position X: \(posX, specifier: "%.1f")")
-                            Slider(value: $posX, in: -10...10)
-                                .onChange(of: posX) { newValue in
-                                    GodotWrapper.updateNodeTransformX(newValue, y: posY, z: posZ)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("Inspector")
+                            .font(.headline)
+                            .padding(.top, 8)
+                            .padding(.horizontal)
+                        
+                        GroupBox(label: Text("Transform").font(.subheadline)) {
+                            VStack(spacing: 12) {
+                                PropertyRow(label: "Position X", value: $posX, range: -10...10) {
+                                    GodotWrapper.updateNodeTransformX(posX, y: posY, z: posZ)
                                 }
-                        }
-                        VStack {
-                            Text("Position Y: \(posY, specifier: "%.1f")")
-                            Slider(value: $posY, in: -10...10)
-                                .onChange(of: posY) { newValue in
-                                    GodotWrapper.updateNodeTransformX(posX, y: newValue, z: posZ)
+                                PropertyRow(label: "Position Y", value: $posY, range: -10...10) {
+                                    GodotWrapper.updateNodeTransformX(posX, y: posY, z: posZ)
                                 }
-                        }
-                        VStack {
-                            Text("Position Z: \(posZ, specifier: "%.1f")")
-                            Slider(value: $posZ, in: -10...10)
-                                .onChange(of: posZ) { newValue in
-                                    GodotWrapper.updateNodeTransformX(posX, y: posY, z: newValue)
+                                PropertyRow(label: "Position Z", value: $posZ, range: -10...10) {
+                                    GodotWrapper.updateNodeTransformX(posX, y: posY, z: posZ)
                                 }
+                                PropertyRow(label: "Rotation X", value: $rotX, range: -180...180)
+                                PropertyRow(label: "Scale", value: $scale, range: 0.1...10)
+                            }
+                            .padding(.vertical, 8)
                         }
+                        .padding(.horizontal)
                     }
                 }
-                .background(Color(UIColor.systemBackground))
+                .background(Color(red: 0.13, green: 0.13, blue: 0.13))
+                .foregroundColor(.white)
             }
         }
 
-        // ---------- Bottom Controls ----------
+        // Reusable property row with slider
+        struct PropertyRow: View {
+            let label: String
+            @Binding var value: Float
+            let range: ClosedRange<Float>
+            var onChange: (() -> Void)? = nil
+            
+            var body: some View {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text(label)
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                        Spacer()
+                        TextField("", value: $value, formatter: NumberFormatter())
+                            .frame(width: 60)
+                            .multilineTextAlignment(.trailing)
+                            .textFieldStyle(.plain)
+                            .foregroundColor(.white)
+                            .font(.caption)
+                    }
+                    Slider(value: $value, in: range)
+                        .onChange(of: value) { _ in
+                            onChange?()
+                        }
+                        .tint(.blue)
+                }
+            }
+        }
+
+        // MARK: - Bottom Controls
         struct BottomControls: View {
+            @State private var mode3D = true
+            
             var body: some View {
                 HStack {
-                    Image(systemName: "arrow.counterclockwise")
+                    Button(action: {}) {
+                        Image(systemName: "arrow.counterclockwise")
+                    }
                     Spacer()
-                    Text("3D").bold()
-                    Text("2D")
+                    HStack(spacing: 0) {
+                        Text("3D")
+                            .fontWeight(mode3D ? .bold : .regular)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 4)
+                            .background(mode3D ? Color.blue : Color.clear)
+                            .cornerRadius(4)
+                            .onTapGesture { mode3D = true }
+                        Text("2D")
+                            .fontWeight(!mode3D ? .bold : .regular)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 4)
+                            .background(!mode3D ? Color.blue : Color.clear)
+                            .cornerRadius(4)
+                            .onTapGesture { mode3D = false }
+                    }
                 }
-                .padding()
-                .background(Color(.darkGray))
+                .padding(.horizontal)
+                .frame(height: 40)
+                .background(Color(red: 0.15, green: 0.15, blue: 0.15))
                 .foregroundColor(.white)
             }
         }
         EOF
-
-    # ==========================================
-    # 5. XCODEGEN CONFIGURATION
-    # ==========================================
-    - name: Install XcodeGen
-      run: brew install xcodegen
-
-    - name: Create project.yml
-      run: |
-        cat << 'EOF' > project.yml
-        name: XogotApp
-        options:
-          bundleIdPrefix: com.xogot
-        targets:
-          XogotApp:
-            type: application
-            platform: iOS
-            deploymentTarget: "15.0"
-            sources:
-              - path: XogotApp/Sources
-              - path: XogotApp/Core
-              - path: XogotApp/Bridge
-            settings:
-              INFOPLIST_FILE: XogotApp/Info.plist
-              SWIFT_OBJC_BRIDGING_HEADER: XogotApp/Bridge/BridgingHeader.h
-              CODE_SIGNING_ALLOWED: NO
-              CODE_SIGNING_REQUIRED: NO
-              CODE_SIGN_IDENTITY: ""
-        EOF
-
-    - name: Generate Xcode Project
-      run: xcodegen generate
-
-    # ==========================================
-    # 6. BUILD APP PAYLOAD
-    # ==========================================
-    - name: Build App for iOS
-      run: |
-        xcodebuild build \
-          -project XogotApp.xcodeproj \
-          -scheme XogotApp \
-          -sdk iphoneos \
-          -configuration Release \
-          CODE_SIGNING_ALLOWED=NO \
-          CODE_SIGNING_REQUIRED=NO \
-          CODE_SIGN_IDENTITY="" \
-          BUILD_DIR="$(PWD)/build"
-
-    # ==========================================
-    # 7. PSEUDO-SIGNING (Fixes crash on Sideload)
-    # ==========================================
-    - name: Install ldid for Pseudo-Signing
-      run: brew install ldid
-
-    - name: Package and Pseudo-Sign Unsigned IPA
-      run: |
-        mkdir -p Payload
-        cp -r build/Release-iphoneos/XogotApp.app Payload/
-        # Pseudo-sign the binary so tools like TrollStore can run it without "Killed: 9" or bad descriptors
-        ldid -S Payload/XogotApp.app/XogotApp
-        zip -r XogotApp.ipa Payload/
-
-    # ==========================================
-    # 8. UPLOAD ARTIFACT
-    # ==========================================
-    - name: Upload IPA Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: XogotApp-iOS-IPA
-        path: XogotApp.ipa
