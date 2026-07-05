@@ -100,7 +100,7 @@ jobs:
         EOF
 
     # ================
-    # C++ Core (correct include path for engine.h)
+    # C++ Core (engine startup and scene manipulation)
     # ================
     - name: Generate C++ Core
       run: |
@@ -205,7 +205,7 @@ jobs:
         EOF
 
     # ================
-    # SwiftUI Xogot‑style editor
+    # SwiftUI Xogot‑style editor with viewport, panels, sliders
     # ================
     - name: Generate SwiftUI Editor
       run: |
@@ -230,6 +230,7 @@ jobs:
             }
         }
 
+        // MARK: - Main layout
         struct XogotMainEditor: View {
             var body: some View {
                 VStack(spacing: 0) {
@@ -251,6 +252,7 @@ jobs:
             }
         }
 
+        // MARK: - Top Toolbar
         struct TopToolbar: View {
             var body: some View {
                 HStack(spacing: 16) {
@@ -277,6 +279,7 @@ jobs:
             }
         }
 
+        // MARK: - Scene Tree Panel
         struct SceneTreePanel: View {
             var body: some View {
                 VStack(alignment: .leading, spacing: 0) {
@@ -296,13 +299,16 @@ jobs:
             }
         }
 
+        // MARK: - Godot Viewport (UIViewRepresentable) – force unwrap
         struct GodotViewport: UIViewRepresentable {
             func makeUIView(context: Context) -> UIView {
+                // createEngineView never returns nil, force unwrap is safe.
                 return GodotWrapper.createEngineView()!
             }
             func updateUIView(_ uiView: UIView, context: Context) {}
         }
 
+        // MARK: - Inspector Panel (with sliders connected to engine)
         struct InspectorPanel: View {
             @State private var posX: Float = 0.0
             @State private var posY: Float = 0.0
@@ -335,6 +341,7 @@ jobs:
             }
         }
 
+        // Reusable slider row
         struct PropertySlider: View {
             let label: String
             @Binding var value: Float
@@ -355,6 +362,7 @@ jobs:
             }
         }
 
+        // MARK: - Bottom Controls
         struct BottomControls: View {
             @State private var mode3D = true
             
@@ -388,7 +396,7 @@ jobs:
         EOF
 
     # ================
-    # XcodeGen project
+    # XcodeGen project (added C++17 standard)
     # ================
     - name: Install XcodeGen
       run: brew install xcodegen
@@ -414,6 +422,7 @@ jobs:
               CODE_SIGNING_ALLOWED: NO
               CODE_SIGNING_REQUIRED: NO
               CODE_SIGN_IDENTITY: ""
+              CLANG_CXX_LANGUAGE_STANDARD: "c++17"
               LIBRARY_SEARCH_PATHS:
                 - $(inherited)
                 - $(PROJECT_DIR)/XogotApp/Libs
