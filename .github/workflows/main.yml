@@ -5,9 +5,7 @@ on:
     branches: [ "main" ]
 
 env:
-  # Silence Homebrew tap‑trust warnings (aws/tap leftover)
   HOMEBREW_NO_REQUIRE_TAP_TRUST: 1
-  # Godot version to build
   GODOT_VERSION: "4.2.2-stable"
 
 jobs:
@@ -69,7 +67,6 @@ jobs:
     - name: Copy & Clean Library
       run: |
         cp libs/libgodot_engine.a XogotApp/Libs/
-        # Remove Godot's own main entry point to avoid clash with SwiftUI's @main
         ar -d XogotApp/Libs/libgodot_engine.a app.ios.template_release.arm64.o
 
     # -----------------------------------------------------------------------
@@ -121,7 +118,7 @@ jobs:
         EOF
 
     # -----------------------------------------------------------------------
-    # 8.  C++ engine wrapper (thin layer over Godot’s iOS entry points)
+    # 8.  C++ engine wrapper
     # -----------------------------------------------------------------------
     - name: Generate C++ Core
       run: |
@@ -129,32 +126,8 @@ jobs:
         #ifndef GODOT_ENGINE_HPP
         #define GODOT_ENGINE_HPP
 
-        #ifdef __cplusplus
-        extern "C" {
-        #endif
+        #include <string>
 
-        void godot_ios_init(int argc, char **argv);
-        void godot_ios_iterate();
-        void godot_ios_view_create(void **view);
-        void godot_ios_view_destroy(void *view);
-        void godot_ios_set_view(void *view);
-        void godot_ios_deinit();
-
-        #ifdef __cplusplus
-        }
-        #endif
-        #endif
-        EOF
-
-        cat << 'EOF' > XogotApp/Core/GodotEngine.cpp
-        #include "GodotEngine.hpp"
-        #include "core/version.h"
-        #include "main/main.h"
-        #include "core/config/engine.h"
-        #include "core/os/os.h"
-
-        // These must match the symbols exported by Godot’s iOS platform.
-        // They are defined in platform/iphone/godot_iphone.mm
         extern "C" {
             void godot_ios_init(int argc, char **argv);
             void godot_ios_iterate();
@@ -164,13 +137,28 @@ jobs:
             void godot_ios_deinit();
         }
 
-        // Convenience C++ wrappers (used from ObjC bridge)
+        class GodotEngine {
+        public:
+            static std::string getEngineVersion();
+            static void initEngine(int argc, char* argv[]);
+            static void iterateEngine();
+            static void createView(void **view);
+            static void destroyView(void *view);
+            static void setView(void *view);
+            static void deinitEngine();
+        };
+        #endif
+        EOF
+
+        cat << 'EOF' > XogotApp/Core/GodotEngine.cpp
+        #include "GodotEngine.hpp"
+        #include "core/version.h"
+
         std::string GodotEngine::getEngineVersion() {
             return VERSION_FULL_CONFIG;
         }
 
         void GodotEngine::initEngine(int argc, char* argv[]) {
-            // Pass arguments to Godot (--path, --editor, etc.)
             godot_ios_init(argc, argv);
         }
 
@@ -208,7 +196,7 @@ jobs:
         EOF
 
     # -----------------------------------------------------------------------
-    # 10. ObjC++ bridge + UIView that hosts Godot’s Metal layer
+    # 10. ObjC++ bridge + UIView that hosts Godot's Metal layer
     # -----------------------------------------------------------------------
     - name: Generate ObjC++ Bridge
       run: |
@@ -222,8 +210,8 @@ jobs:
         + (void)startEngineWithArgc:(int)argc argv:(char**)argv;
         + (void)iterateEngine;
         + (void)deinitEngine;
-        + (UIView *)createEngineView;          // returns a UIView that renders Godot
-        + (void)setEngineView:(UIView *)view;  // attach the view to Godot's renderer
+        + (UIView *)createEngineView;
+        + (void)setEngineView:(UIView *)view;
 
         @end
         EOF
@@ -253,7 +241,6 @@ jobs:
         + (UIView *)createEngineView {
             void *nativeView = nullptr;
             GodotEngine::createView(&nativeView);
-            // nativeView is a UIView* (actually a GodotView, which is a UIView subclass)
             return (__bridge UIView *)nativeView;
         }
 
@@ -264,7 +251,6 @@ jobs:
         @end
         EOF
 
-        # Bridging header to expose ObjC to Swift
         cat << 'EOF' > XogotApp/Bridge/BridgingHeader.h
         #import "GodotWrapper.h"
         EOF
@@ -289,30 +275,22 @@ jobs:
             }
         }
 
-        // The AppDelegate starts the engine and runs the main loop via CADisplayLink
         class AppDelegate: NSObject, UIApplicationDelegate {
             var displayLink: CADisplayLink?
             
             func application(_ application: UIApplication,
                              didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-                // Path to the bundled Godot project
                 guard let resourcePath = Bundle.main.resourcePath else {
                     fatalError("No resource path")
                 }
                 let projectPath = resourcePath + "/godot_project"
-                
-                // Build arguments: --path <project> --editor (or omit --editor for game mode)
                 let args = ["--path", projectPath]
                 var cargs = args.map { strdup($0) }
                 GodotWrapper.startEngine(withArgc: Int32(args.count), argv: &cargs)
-                
-                // Free the duplicated strings
                 for ptr in cargs { free(ptr) }
                 
-                // Start the rendering loop using a display link (60 fps)
                 displayLink = CADisplayLink(target: self, selector: #selector(step))
                 displayLink?.add(to: .main, forMode: .common)
-                
                 return true
             }
             
@@ -334,9 +312,6 @@ jobs:
             }
         }
 
-        // -----------------------------------------------------------------------
-        // Main editor layout (toolbar, scene tree, viewport, inspector)
-        // -----------------------------------------------------------------------
         struct XogotMainEditor: View {
             var body: some View {
                 VStack(spacing: 0) {
@@ -403,7 +378,6 @@ jobs:
             }
         }
 
-        // UIViewRepresentable wrapping Godot's rendering view
         struct GodotViewport: UIViewRepresentable {
             func makeUIView(context: Context) -> UIView {
                 let view = GodotWrapper.createEngineView()!
@@ -506,7 +480,6 @@ jobs:
         config/features=PackedStringArray("4.2")
         EOF
 
-        # A very basic 3D scene with a camera, light, and cube
         cat << 'EOF' > XogotApp/Resources/godot_project/scene.tscn
         [gd_scene load_steps=6 format=3 uid="uid://d3j6b8m5j7x2n"]
 
@@ -530,7 +503,6 @@ jobs:
         mesh = SubResource("BoxMesh_1")
         EOF
 
-        # Since the scene references a cube_mesh.tres, we provide a placeholder (the scene already defines the mesh inline, so this file can be empty or just a dummy)
         cat << 'EOF' > XogotApp/Resources/godot_project/cube_mesh.tres
         [gd_resource type="ArrayMesh" load_steps=0 format=3]
         EOF
@@ -611,7 +583,6 @@ jobs:
 
     # -----------------------------------------------------------------------
     # 15. Package IPA with pseudo-sign (ldid) – for jailbroken devices only!
-    #     Replace this section with proper signing if you have a developer account.
     # -----------------------------------------------------------------------
     - name: Package and Pseudo-Sign IPA
       run: |
