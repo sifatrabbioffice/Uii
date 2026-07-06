@@ -1,12 +1,18 @@
-name: Xogot Complete iOS Architecture Build (Full Editor)
+name: Xogot Complete iOS Architecture Build (Stable)
 
 on:
   push:
     branches: [ "main" ]
 
+env:
+  # Silence Homebrew tap‑trust warnings (aws/tap leftover)
+  HOMEBREW_NO_REQUIRE_TAP_TRUST: 1
+  # Godot version to build
+  GODOT_VERSION: "4.2.2-stable"
+
 jobs:
   build-xogot-ios:
-    name: Build Xogot with Godot Engine & Custom SwiftUI Editor
+    name: Build Xogot Editor for iOS (Godot 4.2.2)
     runs-on: macos-latest
     timeout-minutes: 360
 
@@ -14,56 +20,61 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v4
 
+    # -----------------------------------------------------------------------
+    # 1.  Install build tools
+    # -----------------------------------------------------------------------
     - name: Install Build Tools
       run: |
-        brew install scons
+        brew install scons xcodegen ldid
         pip3 install --user --break-system-packages pyyaml
 
-    # ================
-    # Clone Godot (iOS Engine Fork – master branch)
-    # ================
+    # -----------------------------------------------------------------------
+    # 2.  Clone Godot engine (official release tag)
+    # -----------------------------------------------------------------------
     - name: Clone Godot Engine
       run: |
-        git clone --branch master --depth 1 https://github.com/timoschwarzer/godot.git godot_src
+        git clone --branch $GODOT_VERSION --depth 1 https://github.com/godotengine/godot.git godot_src
 
-    # ================
-    # Build Godot iOS static library (template_release, no Vulkan)
-    # ================
+    # -----------------------------------------------------------------------
+    # 3.  Build Godot iOS static library (arm64, release, no editor modules)
+    # -----------------------------------------------------------------------
     - name: Build Godot iOS Engine Library
       run: |
         cd godot_src
-        scons platform=ios target=template_release arch=arm64 optimize=size bits=64 ios_simulator=no \
-          module_editor=no module_mono=no module_webrtc=no module_regex=no vulkan=no \
+        scons platform=ios target=template_release arch=arm64 optimize=size bits=64 \
+          vulkan=no use_volk=no module_mono_enabled=no module_editor=no \
+          module_bmp_enabled=no module_csg_enabled=no module_gridmap_enabled=no \
+          module_webp_enabled=no module_theora_enabled=no module_jpg_enabled=no \
           progress=no -j$(sysctl -n hw.logicalcpu)
         mkdir -p ../libs
         cp bin/libgodot.ios.template_release.arm64.a ../libs/libgodot_engine.a
 
-    # ================
-    # Copy generated headers
-    # ================
+    # -----------------------------------------------------------------------
+    # 4.  Copy required headers (platform_config.h)
+    # -----------------------------------------------------------------------
     - name: Copy generated headers
       run: |
         find godot_src/bin -name "platform_config.h" -exec cp {} godot_src/platform/ios/ \;
 
-    # ================
-    # Create directories & copy artifacts, then remove duplicate main
-    # ================
+    # -----------------------------------------------------------------------
+    # 5.  Create app directory structure
+    # -----------------------------------------------------------------------
     - name: Create App Directories
       run: |
-        mkdir -p XogotApp/Sources
-        mkdir -p XogotApp/Core
-        mkdir -p XogotApp/Bridge
-        mkdir -p XogotApp/Libs
+        mkdir -p XogotApp/{Sources,Core,Bridge,Libs,Resources}
 
-    - name: Copy Godot Artifacts (and delete main object)
+    # -----------------------------------------------------------------------
+    # 6.  Copy Godot static library and remove conflicting main
+    # -----------------------------------------------------------------------
+    - name: Copy & Clean Library
       run: |
         cp libs/libgodot_engine.a XogotApp/Libs/
-        # Remove the object that contains Godot's main function to avoid conflict with SwiftUI @main
+        # Remove Godot's own main entry point to avoid clash with SwiftUI's @main
         ar -d XogotApp/Libs/libgodot_engine.a app.ios.template_release.arm64.o
 
-    # ================
-    # Info.plist
-    # ================
+    # -----------------------------------------------------------------------
+    # 7.  Generate Info.plist
+    # -----------------------------------------------------------------------
     - name: Generate Info.plist
       run: |
         cat << 'EOF' > XogotApp/Info.plist
@@ -96,71 +107,109 @@ jobs:
             <true/>
             <key>LSSupportsOpeningDocumentsInPlace</key>
             <true/>
+            <key>UIRequiredDeviceCapabilities</key>
+            <array>
+                <string>arm64</string>
+                <string>metal</string>
+            </array>
+            <key>UIStatusBarHidden</key>
+            <false/>
+            <key>UIViewControllerBasedStatusBarAppearance</key>
+            <false/>
         </dict>
         </plist>
         EOF
 
-    # ================
-    # C++ Core
-    # ================
+    # -----------------------------------------------------------------------
+    # 8.  C++ engine wrapper (thin layer over Godot’s iOS entry points)
+    # -----------------------------------------------------------------------
     - name: Generate C++ Core
       run: |
         cat << 'EOF' > XogotApp/Core/GodotEngine.hpp
         #ifndef GODOT_ENGINE_HPP
         #define GODOT_ENGINE_HPP
-        #include <string>
 
-        class GodotEngine {
-        public:
-            static std::string getEngineVersion();
-            static void initEngine(int argc, char* argv[]);
-            static void startMainLoop();
-            static void iterateMainLoop();
-            static void updateNodeTransform(float x, float y, float z);
-        };
+        #ifdef __cplusplus
+        extern "C" {
+        #endif
+
+        void godot_ios_init(int argc, char **argv);
+        void godot_ios_iterate();
+        void godot_ios_view_create(void **view);
+        void godot_ios_view_destroy(void *view);
+        void godot_ios_set_view(void *view);
+        void godot_ios_deinit();
+
+        #ifdef __cplusplus
+        }
+        #endif
         #endif
         EOF
-        
+
         cat << 'EOF' > XogotApp/Core/GodotEngine.cpp
         #include "GodotEngine.hpp"
         #include "core/version.h"
         #include "main/main.h"
         #include "core/config/engine.h"
+        #include "core/os/os.h"
 
+        // These must match the symbols exported by Godot’s iOS platform.
+        // They are defined in platform/iphone/godot_iphone.mm
+        extern "C" {
+            void godot_ios_init(int argc, char **argv);
+            void godot_ios_iterate();
+            void godot_ios_view_create(void **view);
+            void godot_ios_view_destroy(void *view);
+            void godot_ios_set_view(void *view);
+            void godot_ios_deinit();
+        }
+
+        // Convenience C++ wrappers (used from ObjC bridge)
         std::string GodotEngine::getEngineVersion() {
             return VERSION_FULL_CONFIG;
         }
 
         void GodotEngine::initEngine(int argc, char* argv[]) {
-            Main::setup("iphone", argc, argv, false);
+            // Pass arguments to Godot (--path, --editor, etc.)
+            godot_ios_init(argc, argv);
         }
 
-        void GodotEngine::startMainLoop() {
-            Main::start();
+        void GodotEngine::iterateEngine() {
+            godot_ios_iterate();
         }
 
-        void GodotEngine::iterateMainLoop() {
-            Main::iteration();
+        void GodotEngine::createView(void **view) {
+            godot_ios_view_create(view);
         }
 
-        void GodotEngine::updateNodeTransform(float x, float y, float z) {
-            // Placeholder
+        void GodotEngine::destroyView(void *view) {
+            godot_ios_view_destroy(view);
+        }
+
+        void GodotEngine::setView(void *view) {
+            godot_ios_set_view(view);
+        }
+
+        void GodotEngine::deinitEngine() {
+            godot_ios_deinit();
         }
         EOF
 
-    # ================
-    # Embedded plugin stubs
-    # ================
+    # -----------------------------------------------------------------------
+    # 9.  Stub for embedded plugins (required by Godot)
+    # -----------------------------------------------------------------------
     - name: Generate Embedded Plugin Stubs
       run: |
         cat << 'EOF' > XogotApp/Core/plugin_stubs.cpp
-        void godot_apple_embedded_plugins_initialize() {}
-        void godot_apple_embedded_plugins_deinitialize() {}
+        extern "C" {
+            void godot_ios_embedded_plugins_initialize() {}
+            void godot_ios_embedded_plugins_deinitialize() {}
+        }
         EOF
 
-    # ================
-    # ObjC++ Bridge
-    # ================
+    # -----------------------------------------------------------------------
+    # 10. ObjC++ bridge + UIView that hosts Godot’s Metal layer
+    # -----------------------------------------------------------------------
     - name: Generate ObjC++ Bridge
       run: |
         cat << 'EOF' > XogotApp/Bridge/GodotWrapper.h
@@ -172,8 +221,9 @@ jobs:
         + (NSString *)getEngineVersion;
         + (void)startEngineWithArgc:(int)argc argv:(char**)argv;
         + (void)iterateEngine;
-        + (void)updateNodeTransformX:(float)x y:(float)y z:(float)z;
-        + (UIView*)createEngineView;
+        + (void)deinitEngine;
+        + (UIView *)createEngineView;          // returns a UIView that renders Godot
+        + (void)setEngineView:(UIView *)view;  // attach the view to Godot's renderer
 
         @end
         EOF
@@ -190,33 +240,38 @@ jobs:
 
         + (void)startEngineWithArgc:(int)argc argv:(char**)argv {
             GodotEngine::initEngine(argc, argv);
-            GodotEngine::startMainLoop();
         }
 
         + (void)iterateEngine {
-            GodotEngine::iterateMainLoop();
+            GodotEngine::iterateEngine();
         }
 
-        + (void)updateNodeTransformX:(float)x y:(float)y z:(float)z {
-            GodotEngine::updateNodeTransform(x, y, z);
+        + (void)deinitEngine {
+            GodotEngine::deinitEngine();
         }
 
-        + (UIView*)createEngineView {
-            UIView *view = [[UIView alloc] init];
-            view.contentScaleFactor = UIScreen.mainScreen.scale;
-            return view;
+        + (UIView *)createEngineView {
+            void *nativeView = nullptr;
+            GodotEngine::createView(&nativeView);
+            // nativeView is a UIView* (actually a GodotView, which is a UIView subclass)
+            return (__bridge UIView *)nativeView;
+        }
+
+        + (void)setEngineView:(UIView *)view {
+            GodotEngine::setView((__bridge void *)view);
         }
 
         @end
         EOF
 
+        # Bridging header to expose ObjC to Swift
         cat << 'EOF' > XogotApp/Bridge/BridgingHeader.h
         #import "GodotWrapper.h"
         EOF
 
-    # ================
-    # SwiftUI Xogot‑style editor
-    # ================
+    # -----------------------------------------------------------------------
+    # 11. SwiftUI editor – full Xogot interface with Godot viewport
+    # -----------------------------------------------------------------------
     - name: Generate SwiftUI Editor
       run: |
         cat << 'EOF' > XogotApp/Sources/XogotApp.swift
@@ -224,14 +279,8 @@ jobs:
 
         @main
         struct XogotApp: App {
-            init() {
-                let args = CommandLine.arguments
-                var cargs = args.map { strdup($0) }
-                GodotWrapper.startEngine(withArgc: Int32(args.count), argv: &cargs)
-                Timer.scheduledTimer(withTimeInterval: 1.0/60.0, repeats: true) { _ in
-                    GodotWrapper.iterateEngine()
-                }
-            }
+            @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+
             var body: some Scene {
                 WindowGroup {
                     XogotMainEditor()
@@ -240,6 +289,54 @@ jobs:
             }
         }
 
+        // The AppDelegate starts the engine and runs the main loop via CADisplayLink
+        class AppDelegate: NSObject, UIApplicationDelegate {
+            var displayLink: CADisplayLink?
+            
+            func application(_ application: UIApplication,
+                             didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+                // Path to the bundled Godot project
+                guard let resourcePath = Bundle.main.resourcePath else {
+                    fatalError("No resource path")
+                }
+                let projectPath = resourcePath + "/godot_project"
+                
+                // Build arguments: --path <project> --editor (or omit --editor for game mode)
+                let args = ["--path", projectPath]
+                var cargs = args.map { strdup($0) }
+                GodotWrapper.startEngine(withArgc: Int32(args.count), argv: &cargs)
+                
+                // Free the duplicated strings
+                for ptr in cargs { free(ptr) }
+                
+                // Start the rendering loop using a display link (60 fps)
+                displayLink = CADisplayLink(target: self, selector: #selector(step))
+                displayLink?.add(to: .main, forMode: .common)
+                
+                return true
+            }
+            
+            @objc func step(displayLink: CADisplayLink) {
+                GodotWrapper.iterateEngine()
+            }
+            
+            func applicationWillTerminate(_ application: UIApplication) {
+                displayLink?.invalidate()
+                GodotWrapper.deinitEngine()
+            }
+            
+            func applicationDidEnterBackground(_ application: UIApplication) {
+                displayLink?.isPaused = true
+            }
+            
+            func applicationWillEnterForeground(_ application: UIApplication) {
+                displayLink?.isPaused = false
+            }
+        }
+
+        // -----------------------------------------------------------------------
+        // Main editor layout (toolbar, scene tree, viewport, inspector)
+        // -----------------------------------------------------------------------
         struct XogotMainEditor: View {
             var body: some View {
                 VStack(spacing: 0) {
@@ -296,7 +393,7 @@ jobs:
                         Text("Node3D").font(.callout)
                         Text("  ↳ Camera3D").foregroundColor(.blue)
                         Text("  ↳ DirectionalLight3D").foregroundColor(.yellow)
-                        Text("  ↳ CharacterBody3D").foregroundColor(.orange)
+                        Text("  ↳ MeshInstance3D").foregroundColor(.orange)
                     }
                     .listStyle(.plain)
                     .background(Color(red: 0.12, green: 0.12, blue: 0.12))
@@ -306,10 +403,14 @@ jobs:
             }
         }
 
+        // UIViewRepresentable wrapping Godot's rendering view
         struct GodotViewport: UIViewRepresentable {
             func makeUIView(context: Context) -> UIView {
-                return GodotWrapper.createEngineView()!
+                let view = GodotWrapper.createEngineView()!
+                GodotWrapper.setEngineView(view)
+                return view
             }
+            
             func updateUIView(_ uiView: UIView, context: Context) {}
         }
 
@@ -325,15 +426,9 @@ jobs:
                         
                         GroupBox(label: Text("Transform").font(.subheadline)) {
                             VStack(spacing: 12) {
-                                PropertySlider(label: "Position X", value: $posX, range: -10...10) {
-                                    GodotWrapper.updateNodeTransformX(posX, y: posY, z: posZ)
-                                }
-                                PropertySlider(label: "Position Y", value: $posY, range: -10...10) {
-                                    GodotWrapper.updateNodeTransformX(posX, y: posY, z: posZ)
-                                }
-                                PropertySlider(label: "Position Z", value: $posZ, range: -10...10) {
-                                    GodotWrapper.updateNodeTransformX(posX, y: posY, z: posZ)
-                                }
+                                PropertySlider(label: "Position X", value: $posX, range: -10...10)
+                                PropertySlider(label: "Position Y", value: $posY, range: -10...10)
+                                PropertySlider(label: "Position Z", value: $posZ, range: -10...10)
                             }
                             .padding(.vertical, 8)
                         }
@@ -349,7 +444,6 @@ jobs:
             let label: String
             @Binding var value: Float
             let range: ClosedRange<Float>
-            var onChange: (() -> Void)? = nil
             
             var body: some View {
                 VStack(alignment: .leading, spacing: 4) {
@@ -358,9 +452,7 @@ jobs:
                         Spacer()
                         Text("\(value, specifier: "%.1f")").foregroundColor(.white).font(.caption)
                     }
-                    Slider(value: $value, in: range)
-                        .onChange(of: value) { _ in onChange?() }
-                        .tint(.blue)
+                    Slider(value: $value, in: range).tint(.blue)
                 }
             }
         }
@@ -397,12 +489,55 @@ jobs:
         }
         EOF
 
-    # ================
-    # XcodeGen project (fixed framework linking)
-    # ================
-    - name: Install XcodeGen
-      run: brew install xcodegen
+    # -----------------------------------------------------------------------
+    # 12. Minimal Godot project (so the engine has something to load)
+    # -----------------------------------------------------------------------
+    - name: Create Bundled Godot Project
+      run: |
+        mkdir -p XogotApp/Resources/godot_project
+        cat << 'EOF' > XogotApp/Resources/godot_project/project.godot
+        ; Engine configuration file.
+        ; It's best edited using the editor UI, but can be edited directly.
 
+        [application]
+        config/name="Xogot Demo"
+        config/description="Minimal project for Xogot Editor"
+        run/main_scene="res://scene.tscn"
+        config/features=PackedStringArray("4.2")
+        EOF
+
+        # A very basic 3D scene with a camera, light, and cube
+        cat << 'EOF' > XogotApp/Resources/godot_project/scene.tscn
+        [gd_scene load_steps=6 format=3 uid="uid://d3j6b8m5j7x2n"]
+
+        [ext_resource type="PackedScene" uid="uid://bg1e3r5fj8t0y" path="res://cube_mesh.tres" id="1_cube"]
+
+        [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_1"]
+        albedo_color = Color(0.2, 0.6, 1.0, 1.0)
+
+        [sub_resource type="BoxMesh" id="BoxMesh_1"]
+        material = SubResource("StandardMaterial3D_1")
+
+        [node name="Node3D" type="Node3D"]
+
+        [node name="Camera3D" type="Camera3D" parent="."]
+        transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 5)
+
+        [node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+        transform = Transform3D(0.866025, -0.353553, 0.353553, 0, 0.707107, 0.707107, -0.5, -0.612372, 0.612372, 0, 0, 0)
+
+        [node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+        mesh = SubResource("BoxMesh_1")
+        EOF
+
+        # Since the scene references a cube_mesh.tres, we provide a placeholder (the scene already defines the mesh inline, so this file can be empty or just a dummy)
+        cat << 'EOF' > XogotApp/Resources/godot_project/cube_mesh.tres
+        [gd_resource type="ArrayMesh" load_steps=0 format=3]
+        EOF
+
+    # -----------------------------------------------------------------------
+    # 13. XcodeGen project definition
+    # -----------------------------------------------------------------------
     - name: Create project.yml
       run: |
         cat << 'EOF' > project.yml
@@ -413,30 +548,33 @@ jobs:
           XogotApp:
             type: application
             platform: iOS
-            deploymentTarget: "15.0"
+            deploymentTarget: "16.0"
             sources:
               - path: XogotApp/Sources
               - path: XogotApp/Core
               - path: XogotApp/Bridge
+            resources:
+              - path: XogotApp/Resources
             settings:
               INFOPLIST_FILE: XogotApp/Info.plist
               SWIFT_OBJC_BRIDGING_HEADER: $(PROJECT_DIR)/XogotApp/Bridge/BridgingHeader.h
-              CODE_SIGNING_ALLOWED: NO
-              CODE_SIGNING_REQUIRED: NO
-              CODE_SIGN_IDENTITY: ""
               CLANG_CXX_LANGUAGE_STANDARD: "c++17"
+              GCC_PREPROCESSOR_DEFINITIONS:
+                - "GODOT_IPHONE=1"
+                - "VULKAN_ENABLED=0"
+                - "GLES_ENABLED=1"
               LIBRARY_SEARCH_PATHS:
-                - $(inherited)
                 - $(PROJECT_DIR)/XogotApp/Libs
               OTHER_LDFLAGS:
                 - -ObjC
                 - -lstdc++
-                - $(PROJECT_DIR)/XogotApp/Libs/libgodot_engine.a
-                - -Wl,-force_load,$(PROJECT_DIR)/XogotApp/Libs/libgodot_engine.a
+                - -force_load $(PROJECT_DIR)/XogotApp/Libs/libgodot_engine.a
               HEADER_SEARCH_PATHS:
-                - $(inherited)
                 - $(PROJECT_DIR)/godot_src
                 - $(PROJECT_DIR)/godot_src/platform/ios
+                - $(PROJECT_DIR)/godot_src/drivers/gles3
+              FRAMEWORK_SEARCH_PATHS:
+                - $(inherited)
             dependencies:
               - sdk: UIKit.framework
               - sdk: Metal.framework
@@ -456,9 +594,9 @@ jobs:
     - name: Generate Xcode Project
       run: xcodegen generate
 
-    # ================
-    # Build, pseudo‑sign, package
-    # ================
+    # -----------------------------------------------------------------------
+    # 14. Build the app
+    # -----------------------------------------------------------------------
     - name: Build App for iOS
       run: |
         xcodebuild build \
@@ -471,9 +609,10 @@ jobs:
           CODE_SIGN_IDENTITY="" \
           BUILD_DIR="$(PWD)/build"
 
-    - name: Install ldid
-      run: brew install ldid
-
+    # -----------------------------------------------------------------------
+    # 15. Package IPA with pseudo-sign (ldid) – for jailbroken devices only!
+    #     Replace this section with proper signing if you have a developer account.
+    # -----------------------------------------------------------------------
     - name: Package and Pseudo-Sign IPA
       run: |
         mkdir -p Payload
